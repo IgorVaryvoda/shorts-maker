@@ -94,7 +94,7 @@ def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_defau
     Usage:
     - shorts-creator process video.mp4          # Process single video
     - shorts-creator process --input-dir ./     # Process all videos in directory
-    - shorts-creator process                    # Process all videos in current directory with default LUT
+    - shorts-creator process                    # Process all videos in input/ directory with default LUT
     """
 
     try:
@@ -122,13 +122,22 @@ def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_defau
             print("🎬 Shorts Creator - Batch Processing")
             print(f"📁 Input Directory: {input_dir}")
         else:
-            # Default: process all videos in current directory
-            input_files = _get_video_files('.')
+            # Default: process all videos in input directory
+            input_files = _get_video_files('input')
             print("🎬 Shorts Creator - Auto Batch Processing")
-            print("📁 Input Directory: Current directory")
+            print("📁 Input Directory: input/")
+
+            # Create input directory if it doesn't exist
+            if not os.path.exists('input'):
+                os.makedirs('input')
+                print("📁 Created input/ directory - place your videos here!")
 
         if not input_files:
-            click.echo("❌ No video files found to process", err=True)
+            if not input_path and not input_dir:
+                click.echo("❌ No video files found in input/ directory", err=True)
+                click.echo("💡 Place your video files in the input/ directory and try again", err=True)
+            else:
+                click.echo("❌ No video files found to process", err=True)
             return
 
         print("=" * 50)
