@@ -328,20 +328,40 @@ class MusicManager:
         temp_audio = self._prepare_audio_track(music_path, segment_duration)
 
         try:
-            # Mix video with music using FFmpeg
-            cmd = [
-                'ffmpeg',
-                '-i', video_path,           # Input video
-                '-i', temp_audio,           # Input audio
-                '-c:v', 'copy',             # Copy video stream
-                '-c:a', 'aac',              # Encode audio as AAC
-                '-b:a', '128k',             # Audio bitrate
-                '-map', '0:v:0',            # Map video from first input
-                '-map', '1:a:0',            # Map audio from second input
-                '-shortest',                # End when shortest stream ends
-                '-y',                       # Overwrite output
-                output_path
-            ]
+            # Check if input video has audio
+            has_video_audio = self._has_audio_stream(video_path)
+
+            if has_video_audio and self.original_audio_volume > 0:
+                # Mix video audio with music
+                cmd = [
+                    'ffmpeg',
+                    '-i', video_path,           # Input video
+                    '-i', temp_audio,           # Input music
+                    '-c:v', 'copy',             # Copy video stream
+                    '-filter_complex', f'[0:a]volume={self.original_audio_volume}[va];[1:a]volume=1.0[ma];[va][ma]amix=inputs=2:duration=shortest[out]',
+                    '-map', '0:v:0',            # Map video from first input
+                    '-map', '[out]',            # Map mixed audio
+                    '-c:a', 'aac',              # Encode audio as AAC
+                    '-b:a', '128k',             # Audio bitrate
+                    '-shortest',                # End when shortest stream ends
+                    '-y',                       # Overwrite output
+                    output_path
+                ]
+            else:
+                # Video has no audio or original audio is disabled - just add music
+                cmd = [
+                    'ffmpeg',
+                    '-i', video_path,           # Input video
+                    '-i', temp_audio,           # Input music
+                    '-c:v', 'copy',             # Copy video stream
+                    '-c:a', 'aac',              # Encode audio as AAC
+                    '-b:a', '128k',             # Audio bitrate
+                    '-map', '0:v:0',            # Map video from first input
+                    '-map', '1:a:0',            # Map music audio from second input
+                    '-shortest',                # End when shortest stream ends
+                    '-y',                       # Overwrite output
+                    output_path
+                ]
 
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
@@ -446,6 +466,23 @@ class MusicManager:
         except Exception as e:
             self.logger.error(f"Could not get video duration: {e}")
             return 15.0  # Default fallback
+
+    def _has_audio_stream(self, video_path: str) -> bool:
+        """Check if video file has an audio stream."""
+        cmd = [
+            'ffprobe',
+            '-v', 'quiet',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=codec_type',
+            '-of', 'csv=p=0',
+            video_path
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
 
     def _create_silent_audio(self, output_path: str, duration: float):
         """Create silent audio as fallback."""
