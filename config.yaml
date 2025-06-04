@@ -1,0 +1,197 @@
+# Shorts Creator Configuration
+
+# Video Processing Settings
+video:
+  # Output settings for social media platforms
+  output_resolution: [1080, 1920]  # 9:16 aspect ratio (width, height)
+  fps: 30
+  quality: "high"  # low, medium, high, ultra
+  codec: "h264"
+  bitrate: "5M"  # Video bitrate
+  audio_bitrate: "128k"
+
+  # Input handling
+  supported_formats: ["mp4", "mov", "avi", "mkv", "webm"]
+  max_input_resolution: [3840, 2160]  # 4K max
+
+# Scene Detection and Segmentation
+segmentation:
+  # Duration constraints
+  min_duration: 15  # seconds
+  max_duration: 60  # seconds
+  target_duration: 30  # preferred duration
+
+  # Detection thresholds
+  scene_threshold: 0.4  # 0.0 to 1.0, higher = more sensitive
+  motion_threshold: 0.3
+  audio_threshold: 0.2
+  overlap_threshold: 0.3  # Maximum overlap between segments
+
+  # Analysis settings
+  frame_sample_rate: 1  # frames per second for analysis
+  histogram_bins: 256
+  optical_flow_enabled: true
+  face_detection_enabled: true
+
+  # Scoring weights
+  scoring:
+    visual_interest: 0.4
+    audio_energy: 0.3
+    motion_activity: 0.2
+    face_presence: 0.1
+
+# Color Grading and LUT Processing
+color_grading:
+  # Default settings
+  default_lut: "luts/cinematic.cube"
+  lut_intensity: 0.8  # 0.0 to 1.0
+
+  # Automatic adjustments
+  auto_exposure: true
+  auto_contrast: true
+  auto_saturation: false
+
+  # Manual adjustments (applied after LUT)
+  exposure_offset: 0.0  # -2.0 to 2.0
+  contrast_boost: 1.0   # 0.5 to 2.0
+  saturation_boost: 1.0 # 0.0 to 2.0
+  highlights: 0.0       # -1.0 to 1.0
+  shadows: 0.0          # -1.0 to 1.0
+
+  # Color space settings
+  input_colorspace: "rec709"
+  working_colorspace: "rec709"
+  output_colorspace: "rec709"
+
+# Audio Processing
+audio:
+  # Enhancement
+  normalize: true
+  noise_reduction: true
+  dynamic_range_compression: true
+
+  # Analysis
+  music_detection: true
+  speech_enhancement: true
+  beat_detection: true
+  silence_threshold: -40  # dB
+
+  # Mixing
+  background_music_volume: 0.3  # 0.0 to 1.0
+  voice_ducking: true
+  voice_ducking_amount: 0.5
+
+# Smart Cropping and Framing
+cropping:
+  # AI-powered cropping
+  face_detection: true
+  object_detection: true
+  motion_tracking: true
+
+  # Cropping behavior
+  crop_padding: 0.1  # Extra space around subjects (0.0 to 0.5)
+  smooth_tracking: true
+  tracking_smoothness: 0.8  # 0.0 to 1.0
+
+  # Safe areas (for platform UI)
+  top_safe_area: 0.15    # 15% from top
+  bottom_safe_area: 0.20 # 20% from bottom
+  side_safe_area: 0.05   # 5% from sides
+
+# Text and Captions
+captions:
+  # Speech-to-text
+  enabled: true
+  language: "en"
+  confidence_threshold: 0.7
+
+  # Styling
+  font_family: "Arial Bold"
+  font_size: 48
+  font_color: "#FFFFFF"
+  outline_color: "#000000"
+  outline_width: 2
+
+  # Positioning
+  position: "bottom"  # top, center, bottom
+  margin_bottom: 150  # pixels from bottom
+  max_width: 0.8      # 80% of video width
+
+# Performance Settings
+performance:
+  # Processing
+  use_gpu: true
+  gpu_device: 0
+  num_threads: 4
+  chunk_size: 1000  # frames per chunk
+
+  # Memory management
+  streaming_mode: false
+  max_memory_usage: "8GB"
+  temp_dir: "/tmp/shorts_creator"
+
+  # Caching
+  enable_cache: true
+  cache_dir: ".cache"
+  cache_duration: 7  # days
+
+# Output Settings
+output:
+  # File naming
+  naming_pattern: "{input_name}_short_{index}_{timestamp}"
+  timestamp_format: "%Y%m%d_%H%M%S"
+
+  # Directory structure
+  create_subdirs: true
+  subdir_pattern: "{date}/{input_name}"
+
+  # Metadata
+  include_metadata: true
+  creator_tag: "ShortsCreator"
+
+# Platform-Specific Settings
+platforms:
+  youtube_shorts:
+    max_duration: 60
+    recommended_duration: 30
+    aspect_ratio: [9, 16]
+    max_file_size: "100MB"
+
+  tiktok:
+    max_duration: 60
+    recommended_duration: 15
+    aspect_ratio: [9, 16]
+    max_file_size: "72MB"
+
+  instagram_reels:
+    max_duration: 90
+    recommended_duration: 30
+    aspect_ratio: [9, 16]
+    max_file_size: "100MB"
+
+# Logging and Debugging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: "logs/shorts_creator.log"
+  max_log_size: "10MB"
+  backup_count: 5
+
+  # Debug options
+  save_intermediate_files: false
+  debug_visualizations: false
+  profile_performance: false
+
+# Advanced Features
+advanced:
+  # Experimental features
+  ai_thumbnail_generation: false
+  trend_analysis: false
+  multi_language_captions: false
+
+  # Quality assessment
+  quality_scoring: true
+  engagement_prediction: true
+
+  # Batch processing
+  batch_size: 5
+  parallel_processing: true
