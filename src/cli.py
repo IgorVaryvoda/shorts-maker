@@ -81,52 +81,125 @@ def cli(ctx, config: Optional[str], verbose: bool):
 
 
 @cli.command()
-@click.argument('input_video', type=click.Path(exists=True))
+@click.argument('input_path', type=click.Path(exists=True), required=False)
+@click.option('--input-dir', '-i', type=click.Path(exists=True), help='Input directory for batch processing')
 @click.option('--output-dir', '-o', default='output', help='Output directory')
-@click.option('--lut', '-l', help='Path to LUT file (.cube)')
-@click.option('--max-segments', '-n', default=3, help='Maximum number of segments to create')
+@click.option('--lut', '-l', help='Path to LUT file (.cube) - uses default if not specified')
+@click.option('--max-segments', '-n', default=8, help='Maximum number of segments to create per video')
+@click.option('--use-default-lut', is_flag=True, default=True, help='Use default LUT from config (enabled by default)')
 @click.pass_context
-def process(ctx, input_video, output_dir, lut, max_segments):
-    """🎬 Process a video to create shorts with full progress tracking."""
+def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_default_lut):
+    """🎬 Process video(s) to create shorts with full progress tracking.
 
-    print("🎬 Shorts Creator - Video Processing")
-    print("=" * 50)
-    print(f"📁 Input: {input_video}")
-    print(f"📂 Output: {output_dir}")
-    print(f"🎨 LUT: {lut or 'None'}")
-    print(f"🔢 Max segments: {max_segments}")
-    print("=" * 50)
+    Usage:
+    - shorts-creator process video.mp4          # Process single video
+    - shorts-creator process --input-dir ./     # Process all videos in directory
+    - shorts-creator process                    # Process all videos in current directory with default LUT
+    """
 
     try:
+        # Load config to get default LUT
+        config = Config(ctx.obj['config_path'])
+        default_lut = config.get('color_grading.default_lut')
+
+        # Determine LUT to use
+        lut_to_use = None
+        if lut:
+            lut_to_use = lut
+        elif use_default_lut and default_lut:
+            lut_to_use = default_lut
+
+        # Determine input files
+        input_files = []
+
+        if input_path:
+            # Single file processing
+            input_files = [input_path]
+            print("🎬 Shorts Creator - Single Video Processing")
+        elif input_dir:
+            # Batch processing from specified directory
+            input_files = _get_video_files(input_dir)
+            print("🎬 Shorts Creator - Batch Processing")
+            print(f"📁 Input Directory: {input_dir}")
+        else:
+            # Default: process all videos in current directory
+            input_files = _get_video_files('.')
+            print("🎬 Shorts Creator - Auto Batch Processing")
+            print("📁 Input Directory: Current directory")
+
+        if not input_files:
+            click.echo("❌ No video files found to process", err=True)
+            return
+
+        print("=" * 50)
+        print(f"📂 Output: {output_dir}")
+        print(f"🎨 LUT: {lut_to_use or 'None'}")
+        print(f"🔢 Max segments per video: {max_segments}")
+        print(f"🎥 Videos to process: {len(input_files)}")
+        print("=" * 50)
+
+        # Validate LUT if provided
+        if lut_to_use and not os.path.exists(lut_to_use):
+            click.echo(f"❌ LUT file not found: {lut_to_use}", err=True)
+            return
+
         # Initialize processor
         processor = VideoProcessor(ctx.obj['config_path'])
 
-        # Validate LUT if provided
-        if lut and not os.path.exists(lut):
-            click.echo(f"❌ LUT file not found: {lut}", err=True)
-            return
+        # Process each video
+        total_output_files = []
+        successful_videos = 0
 
-        # Process video with progress tracking
-        output_files = processor.process_video(
-            input_path=input_video,
-            output_dir=output_dir,
-            lut_path=lut,
-            max_segments=max_segments
-        )
+        for i, video_file in enumerate(input_files, 1):
+            print(f"\n🎬 Processing Video {i}/{len(input_files)}: {os.path.basename(video_file)}")
+            print("=" * 60)
 
-        # Display results
-        print("\n🎉 Processing Complete!")
-        print("=" * 50)
+            try:
+                # Create video-specific output directory
+                video_name = Path(video_file).stem
+                video_output_dir = os.path.join(output_dir, video_name)
 
-        if output_files:
-            print(f"✅ Created {len(output_files)} shorts:")
-            for i, file_path in enumerate(output_files, 1):
-                file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
-                print(f"  {i}. {os.path.basename(file_path)} ({file_size:.1f}MB)")
+                # Process video with progress tracking
+                output_files = processor.process_video(
+                    input_path=video_file,
+                    output_dir=video_output_dir,
+                    lut_path=lut_to_use,
+                    max_segments=max_segments
+                )
 
-            print(f"\n📂 All files saved to: {output_dir}")
+                if output_files:
+                    total_output_files.extend(output_files)
+                    successful_videos += 1
+
+                    print(f"\n✅ {os.path.basename(video_file)} - Created {len(output_files)} shorts")
+                    for j, file_path in enumerate(output_files, 1):
+                        file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
+                        print(f"  {j}. {os.path.basename(file_path)} ({file_size:.1f}MB)")
+                else:
+                    print(f"\n⚠️  {os.path.basename(video_file)} - No suitable segments found")
+
+            except Exception as e:
+                print(f"\n❌ Failed to process {os.path.basename(video_file)}: {e}")
+                if ctx.obj['verbose']:
+                    import traceback
+                    traceback.print_exc()
+                continue
+
+        # Display final results
+        print("\n" + "=" * 60)
+        print("🎉 Batch Processing Complete!")
+        print("=" * 60)
+
+        if total_output_files:
+            total_size = sum(os.path.getsize(f) for f in total_output_files) / (1024 * 1024)
+            print(f"✅ Successfully processed {successful_videos}/{len(input_files)} videos")
+            print(f"📊 Created {len(total_output_files)} total shorts ({total_size:.1f}MB)")
+            print(f"📂 All files saved to: {output_dir}")
+
+            if lut_to_use:
+                print(f"🎨 Applied LUT: {lut_to_use}")
         else:
-            print("⚠️  No suitable segments found for processing")
+            print("⚠️  No shorts were created from any videos")
 
     except Exception as e:
         click.echo(f"❌ Processing failed: {e}", err=True)
@@ -134,6 +207,19 @@ def process(ctx, input_video, output_dir, lut, max_segments):
             import traceback
             traceback.print_exc()
         sys.exit(1)
+
+
+def _get_video_files(directory: str) -> List[str]:
+    """Get all video files from a directory."""
+    video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v', '.flv'}
+    video_files = []
+
+    directory_path = Path(directory)
+    for file_path in directory_path.iterdir():
+        if file_path.is_file() and file_path.suffix.lower() in video_extensions:
+            video_files.append(str(file_path))
+
+    return sorted(video_files)
 
 
 @cli.command()
