@@ -1,328 +1,344 @@
-# Shorts Creator - Automated Video Editor
+# Shorts Creator 🎬
 
-An intelligent video editing system that automatically transforms long-form videos into engaging YouTube Shorts and TikTok content with advanced color grading and AI-powered scene detection.
+Automated video editing system for YouTube Shorts and TikTok, specifically optimized for **FPV drone footage**. Transform your long-form aerial videos into engaging short-form content with AI-powered scene detection and professional color grading.
 
-## 🚀 Features
+## ✨ Features
 
-- **🎨 Advanced Color Grading**: Professional LUT (.cube) file support with 3D interpolation
-- **🤖 Intelligent Scene Detection**: AI-powered segmentation using motion, audio, and visual analysis
-- **📱 Platform Optimization**: Automatic formatting for YouTube Shorts (9:16) and TikTok
-- **🎵 Smart Audio Processing**: Beat detection, noise reduction, and automatic music sync
-- **✂️ Dynamic Cropping**: AI-powered subject tracking and reframing
-- **📝 Auto Captions**: Speech-to-text with stylized subtitle rendering
-- **⚡ GPU Acceleration**: CUDA support for fast processing
+### 🎯 Core Requirements (Implemented)
+- **✅ LUT Color Grading**: Professional .cube file support with 3D interpolation
+- **✅ Intelligent Scene Detection**: AI-powered algorithm optimized for FPV drone footage
 
-## 🛠️ Installation
+### 🚁 FPV Drone Optimizations
+- **Motion-Based Scene Detection**: Analyzes optical flow and camera movement
+- **Visual Interest Scoring**: Edge detection, contrast analysis, and texture complexity
+- **Automatic Cropping**: Smart 9:16 aspect ratio conversion for vertical platforms
+- **No Audio Processing**: Optimized for FPV footage (audio removed from dependencies)
 
-### System Requirements
-- Python 3.8+
-- FFmpeg with GPU acceleration support
-- CUDA toolkit (optional, for GPU acceleration)
-- 8GB+ RAM recommended
-- GPU with 4GB+ VRAM (optional)
+### 🎨 Professional Color Grading
+- **3D LUT Support**: Load and apply .cube LUT files with trilinear interpolation
+- **Auto Corrections**: Automatic exposure, contrast, and saturation adjustments
+- **Manual Controls**: Fine-tune highlights, shadows, and color temperature
+- **Sample LUTs**: Built-in cinematic, warm, and cool color grades
 
-### Quick Setup
+### 🎬 Video Processing
+- **Multiple Platforms**: YouTube Shorts, TikTok, Instagram Reels
+- **Quality Presets**: Low, Medium, High, Ultra encoding options
+- **GPU Acceleration**: NVIDIA CUDA support for faster processing
+- **Batch Processing**: Generate multiple shorts from one video
 
-1. **Clone the repository**
+## 🚀 Quick Start
+
+### 1. Installation
+
 ```bash
-git clone https://github.com/yourusername/shorts-creator.git
+# Clone the repository
+git clone <your-repo-url>
 cd shorts-creator
+
+# Run the setup script (handles everything automatically)
+chmod +x setup.sh
+./setup.sh
 ```
 
-2. **Install system dependencies (Ubuntu/Debian)**
+### 2. Activate Environment
+
 ```bash
-sudo apt update
-sudo apt install ffmpeg libsm6 libxext6 libxrender-dev libglib2.0-0
+# For bash/zsh
+source .venv/bin/activate
+
+# For fish shell
+source .venv/bin/activate.fish
 ```
 
-3. **Install system dependencies (Arch/Manjaro)**
+### 3. System Check
+
 ```bash
-sudo pacman -S ffmpeg opencv
+python src/cli.py system-check
 ```
 
-4. **Create virtual environment**
+### 4. Process Your First Video
+
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python src/cli.py process \
+  --input your_fpv_video.mp4 \
+  --output ./shorts \
+  --lut luts/cinematic.cube \
+  --duration 30 \
+  --count 3 \
+  --platform youtube
 ```
 
-5. **Install Python dependencies**
-```bash
-pip install -r requirements.txt
-```
+## 📖 Usage Guide
 
-6. **Install additional system packages**
-```bash
-# For OpenColorIO (LUT processing)
-pip install OpenColorIO-Python
+### Basic Commands
 
-# For MediaPipe (if not installed automatically)
-pip install mediapipe
-```
-
-## 🎯 Quick Start
-
-### Basic Usage
-
-```python
-from src.core.video_processor import VideoProcessor
-from src.core.color_grader import ColorGrader
-
-# Initialize the processor
-processor = VideoProcessor()
-color_grader = ColorGrader()
-
-# Process a video
-input_video = "path/to/your/long_video.mp4"
-output_dir = "output/"
-lut_file = "luts/cinematic.cube"
-
-# Generate shorts
-shorts = processor.create_shorts(
-    input_video=input_video,
-    output_dir=output_dir,
-    lut_file=lut_file,
-    max_duration=60,  # seconds
-    num_shorts=3
-)
-
-print(f"Generated {len(shorts)} shorts!")
-```
-
-### Command Line Interface
-
+#### Process Video
 ```bash
 # Basic processing
-python -m src.cli process --input video.mp4 --output ./shorts/ --lut luts/cinematic.cube
+python src/cli.py process -i video.mp4 -o ./output
 
-# Advanced options
-python -m src.cli process \
-    --input video.mp4 \
-    --output ./shorts/ \
-    --lut luts/vibrant.cube \
-    --duration 45 \
-    --count 5 \
-    --quality high \
-    --gpu
+# With custom LUT and settings
+python src/cli.py process \
+  -i drone_footage.mp4 \
+  -o ./shorts \
+  --lut "luts/DJI Avata 2 D-Log M to Rec.709 V1._.cube" \
+  --duration 45 \
+  --count 5 \
+  --quality ultra \
+  --platform tiktok
 ```
 
-## 📁 Project Structure
+#### Analyze Video (No Processing)
+```bash
+# Quick analysis
+python src/cli.py analyze -i video.mp4
 
+# Save analysis to file
+python src/cli.py analyze -i video.mp4 -o analysis.json
+```
+
+#### LUT Management
+```bash
+# Validate LUT file
+python src/cli.py validate-lut --lut luts/my_lut.cube
+
+# Create sample LUT for testing
+python src/cli.py create-lut --type cinematic --output luts/test.cube
+```
+
+#### Configuration
+```bash
+# Check current config
+python src/cli.py config-check
+
+# Check system requirements
+python src/cli.py system-check
+```
+
+### Advanced Usage
+
+#### Custom Configuration
+Edit `config.yaml` to customize processing parameters:
+
+```yaml
+segmentation:
+  scene_threshold: 0.4      # Scene change sensitivity
+  motion_threshold: 0.3     # Motion detection sensitivity
+  min_duration: 15          # Minimum clip length
+  max_duration: 60          # Maximum clip length
+
+color_grading:
+  lut_intensity: 0.8        # LUT application strength
+  auto_exposure: true       # Automatic exposure correction
+  auto_contrast: true       # Automatic contrast enhancement
+
+video:
+  output_resolution: [1080, 1920]  # 9:16 aspect ratio
+  fps: 30                   # Output frame rate
+  quality: "high"           # Encoding quality
+```
+
+#### Platform-Specific Settings
+```bash
+# YouTube Shorts (up to 60s)
+python src/cli.py process -i video.mp4 -o ./youtube --duration 60 --platform youtube
+
+# TikTok (15-60s, optimized for 15s)
+python src/cli.py process -i video.mp4 -o ./tiktok --duration 15 --platform tiktok
+
+# Instagram Reels (up to 90s)
+python src/cli.py process -i video.mp4 -o ./instagram --duration 30 --platform instagram
+```
+
+## 🎨 Color Grading
+
+### Using LUT Files
+
+The system supports professional .cube LUT files:
+
+```bash
+# Use your own LUT
+python src/cli.py process -i video.mp4 -o ./output --lut path/to/your.cube
+
+# Use built-in LUTs
+python src/cli.py process -i video.mp4 -o ./output --lut luts/cinematic.cube
+```
+
+### Available Sample LUTs
+- `cinematic.cube` - Film-like color grading
+- `warm.cube` - Warm, golden hour tones
+- `cool.cube` - Cool, blue-tinted look
+- `DJI Avata 2 D-Log M to Rec.709 V1._.cube` - Professional DJI conversion
+
+### Creating Custom LUTs
+```bash
+# Create test LUTs
+python src/cli.py create-lut --type warm --output luts/my_warm.cube
+python src/cli.py create-lut --type cool --output luts/my_cool.cube
+python src/cli.py create-lut --type cinematic --output luts/my_cinematic.cube
+```
+
+## 🔧 Algorithm Details
+
+### Scene Detection for FPV Footage
+
+The system uses a multi-factor approach optimized for drone footage:
+
+1. **Histogram Analysis**: Detects scene changes using HSV color histograms
+2. **Optical Flow**: Analyzes camera movement and motion vectors
+3. **Visual Interest Scoring**:
+   - Edge density (terrain features, obstacles)
+   - Contrast levels (dramatic lighting)
+   - Color variance (diverse scenery)
+   - Texture complexity (detail richness)
+
+### Scoring Weights (FPV Optimized)
+- Visual Interest: 60% (higher for scenic drone footage)
+- Motion Activity: 40% (important for dynamic flight)
+- Face Detection: 0% (not relevant for FPV)
+
+### Color Grading Pipeline
+1. **Auto Corrections**: Exposure, contrast, saturation
+2. **LUT Application**: 3D color transformation with trilinear interpolation
+3. **Manual Adjustments**: Highlights, shadows, fine-tuning
+
+## 📊 Performance
+
+### System Requirements
+- **Python**: 3.9+
+- **FFmpeg**: Latest version
+- **GPU**: NVIDIA GPU recommended (CUDA support)
+- **RAM**: 8GB+ recommended
+- **Storage**: SSD recommended for faster processing
+
+### Processing Speed
+- **CPU-only**: ~2-5 minutes per 30s short
+- **GPU-accelerated**: ~1-3 minutes per 30s short
+- **Factors**: Input resolution, quality settings, LUT complexity
+
+### Optimization Tips
+```bash
+# Faster processing (lower quality)
+python src/cli.py process -i video.mp4 -o ./output --quality medium --no-gpu
+
+# Maximum quality (slower)
+python src/cli.py process -i video.mp4 -o ./output --quality ultra --gpu
+```
+
+## 🛠️ Development
+
+### Project Structure
 ```
 shorts-creator/
 ├── src/
 │   ├── core/                 # Core processing modules
-│   │   ├── video_processor.py    # Main video processing
-│   │   ├── scene_detector.py     # Scene detection algorithms
-│   │   ├── color_grader.py       # LUT and color processing
-│   │   └── audio_processor.py    # Audio analysis and processing
-│   ├── algorithms/           # AI algorithms
-│   │   ├── segmentation.py       # Video segmentation logic
-│   │   ├── cropping.py           # Smart cropping algorithms
-│   │   └── scoring.py            # Content scoring system
-│   ├── utils/               # Utility functions
-│   │   ├── lut_loader.py         # LUT file handling
-│   │   ├── file_handler.py       # File I/O operations
-│   │   └── config.py             # Configuration management
-│   └── api/                 # Web API (optional)
-│       ├── main.py               # FastAPI application
-│       └── endpoints.py          # API endpoints
-├── luts/                    # LUT files
-│   ├── cinematic.cube
-│   ├── vibrant.cube
-│   └── vintage.cube
-├── tests/                   # Unit tests
-├── docs/                    # Documentation
+│   │   ├── scene_detector.py # FPV scene detection
+│   │   ├── color_grader.py   # LUT color grading
+│   │   └── video_processor.py # Main orchestrator
+│   ├── utils/                # Utility modules
+│   │   ├── config.py         # Configuration management
+│   │   └── lut_loader.py     # LUT file handling
+│   └── cli.py               # Command-line interface
+├── luts/                    # LUT files directory
 ├── config.yaml             # Configuration file
-├── requirements.txt        # Python dependencies
-└── README.md
+└── pyproject.toml          # UV dependencies
 ```
 
-## 🎨 LUT (Color Grading) Support
+### Adding New Features
+1. **Scene Detection**: Modify `src/core/scene_detector.py`
+2. **Color Grading**: Extend `src/core/color_grader.py`
+3. **Video Processing**: Update `src/core/video_processor.py`
+4. **CLI Commands**: Add to `src/cli.py`
 
-The system supports industry-standard .cube LUT files for professional color grading:
-
-### Supported LUT Formats
-- **3D LUTs**: .cube format (most common)
-- **Size**: 17x17x17, 33x33x33, 65x65x65 grids
-- **Color Spaces**: Rec.709, sRGB, DCI-P3
-
-### Using Custom LUTs
-1. Place your .cube files in the `luts/` directory
-2. Reference them in your processing pipeline:
-
-```python
-color_grader = ColorGrader()
-graded_video = color_grader.apply_lut(
-    video_path="input.mp4",
-    lut_path="luts/your_custom_lut.cube",
-    intensity=0.8  # 0.0 to 1.0
-)
-```
-
-### Popular LUT Sources
-- **Free**: RocketStock, Ground Control, IWLTBAP
-- **Premium**: FilmConvert, Color Grading Central
-- **Create Your Own**: DaVinci Resolve, Adobe Premiere Pro
-
-## 🤖 Intelligent Segmentation Algorithm
-
-The core algorithm analyzes videos using multiple factors:
-
-### Scene Detection Methods
-1. **Visual Analysis**
-   - Histogram differences between frames
-   - Motion vector analysis
-   - Shot boundary detection
-   - Object/face tracking continuity
-
-2. **Audio Analysis**
-   - Silence gap detection
-   - Music beat synchronization
-   - Speech pattern recognition
-   - Audio energy levels
-
-3. **Content Scoring**
-   - Visual interest (contrast, motion, faces)
-   - Audio engagement (music, speech clarity)
-   - Action detection (sudden movements)
-   - Emotional peak identification
-
-### Algorithm Flow
-```
-Input Video → Frame Extraction → Scene Analysis → Content Scoring → Segment Selection → Output Shorts
-```
-
-## ⚙️ Configuration
-
-Edit `config.yaml` to customize processing parameters:
-
-```yaml
-video:
-  output_resolution: [1080, 1920]  # 9:16 aspect ratio
-  fps: 30
-  quality: "high"
-  codec: "h264"
-
-segmentation:
-  min_duration: 15  # seconds
-  max_duration: 60
-  overlap_threshold: 0.3
-  scene_threshold: 0.4
-
-color_grading:
-  default_lut: "luts/cinematic.cube"
-  intensity: 0.8
-  auto_exposure: true
-  contrast_boost: 1.2
-
-audio:
-  normalize: true
-  noise_reduction: true
-  music_detection: true
-  speech_enhancement: true
-```
-
-## 🚀 Performance Optimization
-
-### GPU Acceleration
-Enable GPU processing for 5-10x speed improvement:
-
-```python
-processor = VideoProcessor(use_gpu=True, gpu_device=0)
-```
-
-### Batch Processing
-Process multiple videos efficiently:
-
-```python
-videos = ["video1.mp4", "video2.mp4", "video3.mp4"]
-processor.batch_process(videos, output_dir="batch_output/")
-```
-
-### Memory Management
-For large videos, use streaming processing:
-
-```python
-processor = VideoProcessor(streaming_mode=True, chunk_size=1000)
-```
-
-## 📊 Quality Metrics
-
-The system provides quality assessment:
-
-- **Visual Quality**: PSNR, SSIM scores
-- **Engagement Score**: Based on motion, faces, audio energy
-- **Platform Compliance**: Aspect ratio, duration, file size validation
-- **Processing Efficiency**: Time per minute of input video
-
-## 🧪 Testing
-
-Run the test suite:
-
+### Testing
 ```bash
-# Run all tests
-pytest
+# Test with sample video
+python src/cli.py analyze -i sample_video.mp4
 
-# Run with coverage
-pytest --cov=src
+# Validate LUT files
+python src/cli.py validate-lut --lut luts/cinematic.cube
 
-# Run specific test category
-pytest tests/test_color_grading.py
+# System diagnostics
+python src/cli.py system-check
 ```
+
+## 🎯 FPV-Specific Tips
+
+### Best Input Videos
+- **Resolution**: 1080p or higher
+- **Frame Rate**: 30fps or 60fps
+- **Duration**: 2+ minutes for good scene variety
+- **Content**: Varied flight patterns, different environments
+
+### Optimal Settings for FPV
+```bash
+# Scenic flights (mountains, coastlines)
+python src/cli.py process -i scenic_flight.mp4 -o ./output \
+  --lut luts/cinematic.cube --duration 45 --quality high
+
+# Action flights (racing, freestyle)
+python src/cli.py process -i action_flight.mp4 -o ./output \
+  --duration 15 --quality ultra --platform tiktok
+
+# Sunrise/sunset flights
+python src/cli.py process -i golden_hour.mp4 -o ./output \
+  --lut luts/warm.cube --duration 30
+```
+
+### Scene Selection Tips
+- The algorithm prioritizes high-motion, visually interesting segments
+- Smooth camera movements score higher than shaky footage
+- Varied terrain and lighting changes improve scene detection
+- Avoid long segments of similar scenery
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see LICENSE file for details.
 
-## 🆘 Troubleshooting
+## 🆘 Support
 
 ### Common Issues
 
-**FFmpeg not found**
+**Import Errors**: Make sure you're in the virtual environment
+```bash
+source .venv/bin/activate.fish  # or .venv/bin/activate
+```
+
+**FFmpeg Not Found**: Install FFmpeg for your system
 ```bash
 # Ubuntu/Debian
 sudo apt install ffmpeg
 
+# Arch/Manjaro
+sudo pacman -S ffmpeg
+
 # macOS
 brew install ffmpeg
-
-# Windows
-# Download from https://ffmpeg.org/download.html
 ```
 
-**CUDA out of memory**
-```python
-# Reduce batch size or disable GPU
-processor = VideoProcessor(use_gpu=False)
+**GPU Not Detected**: Install CUDA drivers and PyTorch with CUDA support
+```bash
+uv add torch[cuda] torchvision[cuda]
 ```
 
-**LUT file not loading**
-- Ensure .cube file is properly formatted
-- Check file permissions
-- Verify color space compatibility
+**LUT Files Not Working**: Validate your LUT files
+```bash
+python src/cli.py validate-lut --lut your_file.cube
+```
 
-### Performance Tips
-
-1. **Use SSD storage** for faster I/O
-2. **Enable GPU acceleration** when available
-3. **Adjust chunk_size** based on available RAM
-4. **Use lower quality settings** for faster processing during development
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/shorts-creator/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/shorts-creator/discussions)
-- **Email**: support@shorts-creator.com
+### Getting Help
+- Check system requirements: `python src/cli.py system-check`
+- Validate configuration: `python src/cli.py config-check`
+- Use verbose mode: `python src/cli.py process -v -i video.mp4 -o output`
 
 ---
 
-**Made with ❤️ for content creators**
+**Ready to transform your FPV footage into viral shorts!** 🚁✨

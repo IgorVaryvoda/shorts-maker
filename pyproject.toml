@@ -1,0 +1,230 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "shorts-creator"
+version = "0.1.0"
+description = "Automated video editing system for YouTube Shorts and TikTok with AI-powered scene detection and LUT color grading"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+maintainers = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+keywords = [
+    "video-editing",
+    "youtube-shorts",
+    "tiktok",
+    "ai",
+    "color-grading",
+    "lut",
+    "ffmpeg",
+    "opencv",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Video :: Conversion",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.9"
+
+dependencies = [
+    # Core video processing
+    "opencv-python>=4.8.0",
+    "ffmpeg-python>=0.2.0",
+    "imageio>=2.31.0",
+    "imageio-ffmpeg>=0.4.8",
+
+    # Scientific computing
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "scikit-learn>=1.3.0",
+
+    # Machine Learning & Computer Vision
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "ultralytics>=8.0.0",  # YOLO
+    "mediapipe>=0.10.0",
+
+    # Audio processing
+    "librosa>=0.10.0",
+    "pydub>=0.25.1",
+    "soundfile>=0.12.1",
+
+    # Image processing
+    "Pillow>=10.0.0",
+    "scikit-image>=0.21.0",
+
+    # Color science and LUT processing
+    "colour-science>=0.4.4,<0.5.0",
+
+    # Visualization and plotting
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+
+    # Utilities
+    "tqdm>=4.65.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "click>=8.1.0",
+    "psutil>=5.9.0",
+    "joblib>=1.3.0",
+]
+
+[project.optional-dependencies]
+# Web API dependencies
+api = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "python-multipart>=0.0.6",
+]
+
+# Development dependencies
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.7.0",
+    "ruff>=0.0.280",
+    "mypy>=1.5.0",
+    "pre-commit>=3.3.0",
+]
+
+# CUDA support (optional)
+cuda = [
+    "torch[cuda]>=2.0.0",
+    "torchvision[cuda]>=0.15.0",
+]
+
+# All optional dependencies
+all = [
+    "shorts-creator[api,dev,cuda]",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/shorts-creator"
+Documentation = "https://github.com/yourusername/shorts-creator#readme"
+Repository = "https://github.com/yourusername/shorts-creator.git"
+Issues = "https://github.com/yourusername/shorts-creator/issues"
+
+[project.scripts]
+shorts-creator = "src.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.9"
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "cv2.*",
+    "librosa.*",
+    "mediapipe.*",
+    "ultralytics.*",
+    "colour.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "gpu: marks tests that require GPU",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

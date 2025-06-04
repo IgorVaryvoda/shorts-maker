@@ -16,34 +16,30 @@ video:
 
 # Scene Detection and Segmentation
 segmentation:
-  # Duration constraints
-  min_duration: 15  # seconds
-  max_duration: 60  # seconds
-  target_duration: 30  # preferred duration
+  # Scene detection thresholds
+  scene_threshold: 0.4          # Threshold for scene change detection (0.0-1.0)
+  motion_threshold: 0.3         # Threshold for motion detection (0.0-1.0)
 
-  # Detection thresholds
-  scene_threshold: 0.4  # 0.0 to 1.0, higher = more sensitive
-  motion_threshold: 0.3
-  audio_threshold: 0.2
-  overlap_threshold: 0.3  # Maximum overlap between segments
+  # Frame sampling (frames per second to analyze)
+  frame_sample_rate: 2.0        # Increased from 0.5 to 2.0 for faster processing
 
-  # Analysis settings
-  frame_sample_rate: 1  # frames per second for analysis
-  histogram_bins: 256
-  optical_flow_enabled: true
-  face_detection_enabled: true
+  # Duration constraints (seconds)
+  min_duration: 15              # Minimum segment duration
+  max_duration: 60              # Maximum segment duration
+  target_duration: 30           # Preferred segment duration
 
-  # Scoring weights
+  # Overlap handling
+  overlap_threshold: 0.3        # Maximum allowed overlap between segments
+
+  # Scoring weights for segment selection
   scoring:
-    visual_interest: 0.4
-    audio_energy: 0.3
-    motion_activity: 0.2
-    face_presence: 0.1
+    visual_interest: 0.6        # Weight for visual interest score
+    motion_activity: 0.4        # Weight for motion activity score
 
 # Color Grading and LUT Processing
 color_grading:
   # Default settings
-  default_lut: "luts/cinematic.cube"
+  default_lut: "luts/avata2.cube"
   lut_intensity: 0.8  # 0.0 to 1.0
 
   # Automatic adjustments
