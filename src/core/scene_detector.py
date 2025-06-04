@@ -58,13 +58,18 @@ class FastFPVSceneDetector:
         self.downsample_factor = 4  # Process at 1/4 resolution for speed
         self.adaptive_sampling = True  # Sample more frames in high-motion areas
 
-        # Content filtering settings
+        # Content filtering settings (more lenient)
         self.avoid_low_motion = config.get('segmentation.content_filtering.avoid_low_motion', True)
-        self.min_motion_threshold = config.get('segmentation.content_filtering.min_motion_threshold', 0.05)
+        self.min_motion_threshold = config.get('segmentation.content_filtering.min_motion_threshold', 0.02)
         self.avoid_static_scenes = config.get('segmentation.content_filtering.avoid_static_scenes', True)
-        self.min_visual_interest = config.get('segmentation.content_filtering.min_visual_interest', 0.3)
+        self.min_visual_interest = config.get('segmentation.content_filtering.min_visual_interest', 0.15)
 
-        logger.info("Initialized Fast FPV Scene Detector with optimizations and content filtering")
+        # Dynamic duration settings
+        self.dynamic_duration = config.get('segmentation.dynamic_duration', True)
+        self.quality_extension_threshold = config.get('segmentation.quality_extension_threshold', 0.6)
+        self.max_extension_duration = config.get('segmentation.max_extension_duration', 10)
+
+        logger.info("Initialized Fast FPV Scene Detector with aggressive scene detection and dynamic duration")
 
     def detect_scenes(
         self,
@@ -256,59 +261,88 @@ class FastFPVSceneDetector:
         return metrics
 
     def _detect_scene_boundaries_fast(self, frame_data: List[Dict[str, Any]]) -> List[int]:
-        """Fast scene boundary detection optimized for short segments."""
+        """Aggressive scene boundary detection to find maximum number of interesting segments."""
         if len(frame_data) < 2:
             return [0, len(frame_data) - 1]
 
         boundaries = [0]  # Start with first frame
 
-        # Use smaller window for shorter segments
-        window_size = 3
+        # Use very small window for maximum sensitivity
+        window_size = 2
         scene_changes = []
+        motion_scores = []
+        visual_scores = []
 
-        # Calculate scene change scores
+        # Calculate all metrics for analysis
         for i in range(len(frame_data)):
-            scene_change = frame_data[i]['metrics'].get('scene_change', 0.0)
-            scene_changes.append(scene_change)
+            metrics = frame_data[i]['metrics']
+            scene_change = metrics.get('scene_change', 0.0)
+            motion = metrics.get('motion_magnitude', 0.0)
+            visual = metrics.get('visual_interest', 0.0)
 
-        # Find peaks in scene changes with lower threshold for more segments
+            scene_changes.append(scene_change)
+            motion_scores.append(motion)
+            visual_scores.append(visual)
+
+        # Find ALL significant changes (very aggressive)
         for i in range(window_size, len(scene_changes) - window_size):
             current_score = scene_changes[i]
+            current_motion = motion_scores[i]
+            current_visual = visual_scores[i]
 
-            # Check if this is a local maximum above threshold
+            # Multiple criteria for scene detection
+            is_scene_boundary = False
+
+            # 1. Traditional scene change detection (lowered threshold)
             if current_score > self.scene_threshold:
-                # Check if it's higher than surrounding frames
                 window_scores = scene_changes[i-window_size:i+window_size+1]
-                if current_score == max(window_scores):
-                    # Ensure minimum distance between boundaries (shorter for more segments)
-                    if len(boundaries) == 0 or i - boundaries[-1] > 10:
-                        boundaries.append(i)
+                if current_score >= max(window_scores) * 0.8:  # More lenient peak detection
+                    is_scene_boundary = True
 
-        # Force more segments if we don't have enough
-        if len(boundaries) <= 2:  # Less than 2 segments
-            self.logger.warning("Forcing more segments for better shorts")
+            # 2. Motion-based detection (sudden motion changes)
+            if i > 5:  # Need some history
+                recent_motion = motion_scores[i-5:i]
+                avg_recent_motion = sum(recent_motion) / len(recent_motion)
+                if current_motion > avg_recent_motion * 1.5 and current_motion > 0.03:
+                    is_scene_boundary = True
+
+            # 3. Visual interest spikes
+            if i > 3:
+                recent_visual = visual_scores[i-3:i]
+                avg_recent_visual = sum(recent_visual) / len(recent_visual)
+                if current_visual > avg_recent_visual * 1.3 and current_visual > 0.4:
+                    is_scene_boundary = True
+
+            # Add boundary if any criteria met and minimum distance maintained
+            if is_scene_boundary:
+                if len(boundaries) == 0 or i - boundaries[-1] > 5:  # Very short minimum distance
+                    boundaries.append(i)
+
+        # Force even more segments if we still don't have enough
+        if len(boundaries) <= 3:  # Less than 3 segments
+            self.logger.warning("Forcing many more segments for maximum content extraction")
 
             total_duration = frame_data[-1]['timestamp'] - frame_data[0]['timestamp']
-            target_segment_duration = self.config.get('segmentation.target_duration', 10)
+            segment_duration = 8  # Force 8-second segments initially
 
-            # Create segments every target_duration seconds
+            # Create segments every 8 seconds, but adjust based on content
             boundaries = [0]
-            current_time = target_segment_duration
+            current_time = segment_duration
 
             for i, frame in enumerate(frame_data):
                 if frame['timestamp'] >= current_time:
                     boundaries.append(i)
-                    current_time += target_segment_duration
+                    current_time += segment_duration
 
-                    # Create more segments for shorts
-                    if len(boundaries) >= 12:  # Max 11 segments
+                    # Create many more segments
+                    if len(boundaries) >= 20:  # Max 19 segments
                         break
 
         # Add final frame
         if boundaries[-1] != len(frame_data) - 1:
             boundaries.append(len(frame_data) - 1)
 
-        self.logger.info(f"Created {len(boundaries) - 1} scene boundaries using fast algorithm")
+        self.logger.info(f"Created {len(boundaries) - 1} scene boundaries using aggressive detection")
         return boundaries
 
     def _create_scene_segments(
@@ -317,7 +351,7 @@ class FastFPVSceneDetector:
         frame_data: List[Dict[str, Any]],
         fps: float
     ) -> List[Dict[str, Any]]:
-        """Create scene segments from boundaries with content filtering."""
+        """Create scene segments with dynamic duration based on content quality."""
         scenes = []
 
         for i in range(len(boundaries) - 1):
@@ -328,13 +362,38 @@ class FastFPVSceneDetector:
             end_time = frame_data[end_idx]['timestamp']
             duration = end_time - start_time
 
-            # Filter by duration
-            if duration < self.min_duration or duration > self.max_duration:
-                continue
-
-            # Calculate average metrics for the scene
+            # Calculate metrics first to determine if we should extend
             scene_frames = frame_data[start_idx:end_idx + 1]
             avg_metrics = self._average_metrics(scene_frames)
+
+            # Dynamic duration adjustment based on content quality
+            if self.dynamic_duration and duration < self.max_duration:
+                extended_duration = self._calculate_dynamic_duration(
+                    avg_metrics, duration, boundaries, i, frame_data
+                )
+
+                if extended_duration > duration:
+                    # Extend the segment
+                    new_end_time = start_time + extended_duration
+
+                    # Find the frame index for the new end time
+                    for j in range(end_idx, len(frame_data)):
+                        if frame_data[j]['timestamp'] >= new_end_time:
+                            end_idx = j
+                            break
+
+                    end_time = frame_data[end_idx]['timestamp']
+                    duration = end_time - start_time
+
+                    # Recalculate metrics with extended segment
+                    scene_frames = frame_data[start_idx:end_idx + 1]
+                    avg_metrics = self._average_metrics(scene_frames)
+
+                    self.logger.debug(f"Extended high-quality segment to {duration:.1f}s")
+
+            # Filter by duration constraints
+            if duration < self.min_duration or duration > self.max_duration:
+                continue
 
             # Content filtering - skip boring segments
             if self._is_boring_segment(avg_metrics):
@@ -352,27 +411,78 @@ class FastFPVSceneDetector:
 
             scenes.append(scene)
 
-        self.logger.info(f"Created {len(scenes)} valid scenes after content filtering")
+        self.logger.info(f"Created {len(scenes)} dynamic-duration scenes after content filtering")
         return scenes
 
-    def _is_boring_segment(self, metrics: Dict[str, float]) -> bool:
-        """Check if a segment is boring (e.g., landing, static scene)."""
+    def _calculate_dynamic_duration(
+        self,
+        metrics: Dict[str, float],
+        base_duration: float,
+        boundaries: List[int],
+        current_boundary_idx: int,
+        frame_data: List[Dict[str, Any]]
+    ) -> float:
+        """Calculate dynamic duration based on content quality."""
 
-        # Skip segments with very low motion (landings, hovering)
+        # Calculate quality score
+        visual_interest = metrics.get('visual_interest', 0.0)
+        motion_activity = metrics.get('motion_magnitude', 0.0)
+        contrast = metrics.get('contrast', 0.0)
+
+        quality_score = (
+            visual_interest * 0.4 +
+            motion_activity * 0.4 +
+            contrast * 0.2
+        )
+
+        # If quality is high, extend the duration
+        if quality_score > self.quality_extension_threshold:
+            extension_factor = min(2.0, quality_score / self.quality_extension_threshold)
+            max_extension = self.max_extension_duration * (extension_factor - 1.0)
+
+            # Don't extend beyond the next boundary (if it exists)
+            max_possible_duration = base_duration
+            if current_boundary_idx + 2 < len(boundaries):
+                next_boundary_time = frame_data[boundaries[current_boundary_idx + 2]]['timestamp']
+                current_start_time = frame_data[boundaries[current_boundary_idx]]['timestamp']
+                max_possible_duration = min(
+                    self.max_duration,
+                    next_boundary_time - current_start_time
+                )
+
+            extended_duration = min(
+                base_duration + max_extension,
+                max_possible_duration
+            )
+
+            return extended_duration
+
+        return base_duration
+
+    def _is_boring_segment(self, metrics: Dict[str, float]) -> bool:
+        """Check if a segment is boring (e.g., landing, static scene) - less strict filtering."""
+
+        # Skip segments with very low motion (landings, hovering) - more lenient
         if self.avoid_low_motion:
             motion = metrics.get('motion_magnitude', 0.0)
             if motion < self.min_motion_threshold:
                 return True
 
-        # Skip segments with low visual interest (static scenes)
+        # Skip segments with very low visual interest (static scenes) - more lenient
         if self.avoid_static_scenes:
             visual_interest = metrics.get('visual_interest', 0.0)
             if visual_interest < self.min_visual_interest:
                 return True
 
-        # Skip segments with very low contrast (boring/flat scenes)
+        # Skip segments with extremely low contrast (completely flat/boring scenes)
         contrast = metrics.get('contrast', 0.0)
-        if contrast < 0.1:  # Very low contrast threshold
+        if contrast < 0.05:  # Very low contrast threshold (was 0.1)
+            return True
+
+        # Additional check: skip if BOTH motion and visual interest are very low
+        motion = metrics.get('motion_magnitude', 0.0)
+        visual_interest = metrics.get('visual_interest', 0.0)
+        if motion < 0.01 and visual_interest < 0.1:  # Both extremely low
             return True
 
         return False
