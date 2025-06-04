@@ -18,6 +18,7 @@ import subprocess
 try:
     from .scene_detector import FPVSceneDetector, SceneSegment
     from .color_grader import ColorGrader
+    from .music_manager import MusicManager
     from ..utils.config import Config
     from ..utils.progress import VideoProcessingProgress, ProgressBar
 except ImportError:
@@ -26,6 +27,7 @@ except ImportError:
     sys.path.append(str(Path(__file__).parent.parent))
     from core.scene_detector import FPVSceneDetector, SceneSegment
     from core.color_grader import ColorGrader
+    from core.music_manager import MusicManager
     from utils.config import Config
     from utils.progress import VideoProcessingProgress, ProgressBar
 
@@ -44,6 +46,7 @@ class VideoProcessor:
 
         self.scene_detector = FPVSceneDetector(self.config)
         self.color_grader = ColorGrader(self.config)
+        self.music_manager = MusicManager(self.config)
         self.logger = logging.getLogger(__name__)
 
         # Video settings
@@ -364,11 +367,39 @@ class VideoProcessor:
             except subprocess.TimeoutExpired:
                 raise Exception("FFmpeg processing timed out")
 
-            # Verify output file
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                return output_path
-            else:
+            # Verify output file exists
+            if not (os.path.exists(output_path) and os.path.getsize(output_path) > 0):
                 return None
+
+            # Add music if enabled
+            if self.music_manager.enable_music:
+                print(f"   🎵 Adding background music...")
+
+                # Select music for this segment
+                music_path = self.music_manager.select_music_for_video(input_path, duration)
+
+                if music_path:
+                    # Create temporary path for video with music
+                    temp_output = output_path.replace('.mp4', '_with_music.mp4')
+
+                    # Add music to video
+                    final_output = self.music_manager.add_music_to_video(
+                        video_path=output_path,
+                        output_path=temp_output,
+                        music_path=music_path,
+                        segment_duration=duration
+                    )
+
+                    # Replace original with music version
+                    if os.path.exists(temp_output) and os.path.getsize(temp_output) > 0:
+                        os.replace(temp_output, output_path)
+                        print(f"   ✅ Music added: {os.path.basename(music_path)}")
+                    else:
+                        print(f"   ⚠️  Music addition failed, keeping video-only version")
+                else:
+                    print(f"   ℹ️  No music available - add music files to music/ directory")
+
+            return output_path
 
         except Exception as e:
             print(f"\n   ❌ Error processing segment: {e}")

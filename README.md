@@ -9,6 +9,7 @@ Automated video editing system for YouTube Shorts and TikTok, specifically optim
 - **✅ Intelligent Scene Detection**: Ultra-fast algorithm optimized for FPV drone footage
 - **✅ Batch Processing**: Process entire directories with one command
 - **✅ Dynamic Duration**: 10-20 second segments based on content quality
+- **✅ Intelligent Background Music**: AI-powered music analysis with beat detection and energy scoring
 
 ### 🚁 FPV Drone Optimizations
 - **Comprehensive Scene Detection**: Multiple detection strategies (motion spikes, visual interest peaks, contrast changes)
@@ -28,6 +29,14 @@ Automated video editing system for YouTube Shorts and TikTok, specifically optim
 - **Multiple Platforms**: YouTube Shorts, TikTok, Instagram Reels optimized
 - **Quality Presets**: High-quality encoding with GPU acceleration
 - **Organized Output**: Separate folders for each video processed
+
+### 🎵 Intelligent Music System
+- **AI Music Analysis**: 6-metric energy scoring (RMS energy, spectral centroid, beat strength, etc.)
+- **Smart Segment Selection**: Automatically finds the most exciting parts of songs (chorus/drops)
+- **Beat Detection**: Tempo analysis optimized for 120-180 BPM action music
+- **Caching System**: Never re-analyzes the same song twice
+- **Multiple Formats**: MP3, WAV, M4A, AAC, OGG, FLAC support
+- **Auto-Mixing**: 30% volume with fade in/out effects
 
 ## 🚀 Quick Start
 
@@ -66,10 +75,14 @@ python src/cli.py system-check
 mkdir input
 cp your_fpv_videos.mp4 input/
 
-# 2. Process all videos with default settings (DJI Avata 2 LUT, 8 segments per video)
+# 2. Add background music (optional)
+mkdir music
+cp your_music_files.mp3 music/
+
+# 3. Process all videos with default settings (DJI Avata 2 LUT, 8 segments per video, intelligent music)
 python src/cli.py process
 
-# That's it! Your shorts will be in output/ folder
+# That's it! Your shorts will be in output/ folder with professional color grading and background music
 ```
 
 ## 📖 Usage Guide
@@ -124,6 +137,25 @@ python src/cli.py validate-lut luts/avata2.cube
 
 # System requirements check
 python src/cli.py system-check
+```
+
+### Music Management
+
+```bash
+# Check music library status
+python src/cli.py music-check
+
+# Analyze music for best segments (fast overview)
+python src/cli.py music-analyze --fast
+
+# Analyze top 10 tracks for energy scoring
+python src/cli.py music-analyze --limit 10
+
+# Analyze all tracks (takes time but builds complete cache)
+python src/cli.py music-analyze --limit 0
+
+# Process videos without music
+python src/cli.py process --no-music
 ```
 
 ## 🎨 Color Grading
@@ -182,6 +214,15 @@ video:
   output_resolution: [1080, 1920]   # 9:16 vertical
   fps: 30                           # 30fps output
   quality: "high"                   # High quality encoding
+
+# Background Music
+audio:
+  enable_music: true                # Enable background music
+  music_directory: "music/"         # Music files location
+  music_volume: 0.3                 # 30% volume
+  fade_in_duration: 1.0            # 1 second fade in
+  fade_out_duration: 1.0           # 1 second fade out
+  random_selection: true           # Random track per video
 ```
 
 ## 🔧 Algorithm Details
@@ -215,6 +256,21 @@ Automatically skips boring content:
 - **GPU Processing**: NVIDIA hardware encoding for 10x faster output
 - **Downsampled Analysis**: Processes at 1/4 resolution for speed
 - **Batch Processing**: Handles multiple videos efficiently
+
+### Intelligent Music Analysis
+
+The AI music system analyzes tracks using 6 key metrics:
+
+1. **RMS Energy**: Overall loudness and power (25% weight)
+2. **Spectral Centroid**: Brightness and excitement (20% weight)
+3. **Spectral Rolloff**: High-frequency energy distribution (15% weight)
+4. **Zero Crossing Rate**: Percussive and rhythmic content (10% weight)
+5. **Beat Strength**: Tempo and beat consistency (20% weight)
+6. **Onset Strength**: Musical events and transitions (10% weight)
+
+**Tempo Optimization**: Bonus scoring for 120-180 BPM (ideal for FPV action)
+**Smart Caching**: Results cached with file modification tracking
+**Segment Selection**: Finds chorus/drops instead of just using song beginnings
 
 ## 📊 Example Output
 
@@ -318,6 +374,33 @@ segmentation:
   motion_threshold: 0.005   # Lower = more sensitive
 ```
 
+**No music or audio issues**
+```bash
+# Check music library
+python src/cli.py music-check
+
+# Verify music files are supported formats
+ls music/
+# Supported: .mp3, .wav, .m4a, .aac, .ogg, .flac
+
+# Test music analysis
+python src/cli.py music-analyze --limit 5
+
+# Disable music if having issues
+python src/cli.py process --no-music
+```
+
+**Music analysis too slow**
+```bash
+# Use fast mode for library overview
+python src/cli.py music-analyze --fast
+
+# Analyze only top tracks
+python src/cli.py music-analyze --limit 10
+
+# Results are cached - second run is instant!
+```
+
 ## 📝 License
 
 MIT License - see LICENSE file for details.
@@ -327,11 +410,4 @@ MIT License - see LICENSE file for details.
 1. Fork the repository
 2. Create feature branch (`git checkout -b feature/amazing-feature`)
 3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
-
-## 📞 Support
-
-- **Issues**: GitHub Issues
-- **Discussions**: GitHub Discussions
-- **Documentation**: See `docs/` folder for detailed guides
+4. Push to branch (`

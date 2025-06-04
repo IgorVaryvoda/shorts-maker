@@ -1,6 +1,8 @@
 .cache
 __pycache__
 .venv
+
+# Video files
 *.mp4
 *.mov
 *.avi
@@ -11,3 +13,29 @@ __pycache__
 *.m4b
 *.m4p
 *.m4v
+
+# Music files (keep your music library private)
+*.mp3
+*.wav
+*.aac
+*.ogg
+*.flac
+*.wma
+*.m4a
+*.aiff
+*.au
+*.ra
+
+# Music directories
+music/
+audio/
+
+# Output directories
+output/
+temp/
+logs/
+
+# System files
+.DS_Store
+Thumbs.db
+*.log

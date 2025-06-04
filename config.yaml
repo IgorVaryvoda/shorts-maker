@@ -71,23 +71,31 @@ color_grading:
   working_colorspace: "rec709"
   output_colorspace: "rec709"
 
-# Audio Processing
+# Audio Processing and Music
 audio:
-  # Enhancement
-  normalize: true
-  noise_reduction: true
-  dynamic_range_compression: true
+  # Background Music
+  enable_music: true
+  music_directory: "music/"
+  music_volume: 0.3             # 0.0 to 1.0 (30% volume)
+  fade_in_duration: 1.0         # Seconds
+  fade_out_duration: 1.0        # Seconds
 
-  # Analysis
-  music_detection: true
-  speech_enhancement: true
-  beat_detection: true
-  silence_threshold: -40  # dB
+  # Music Selection
+  random_selection: true        # Random track per video
+  preferred_genres: ["electronic", "cinematic", "upbeat"]
+
+  # Audio Processing
+  normalize_audio: true
+  dynamic_range_compression: true
+  noise_reduction: false        # Not needed for FPV footage
 
   # Mixing
-  background_music_volume: 0.3  # 0.0 to 1.0
-  voice_ducking: true
-  voice_ducking_amount: 0.5
+  original_audio_volume: 0.0    # 0% - FPV footage usually has no useful audio
+  music_ducking: false          # No speech to duck for
+
+  # Beat Detection (for advanced features)
+  beat_detection: true
+  sync_cuts_to_beats: false     # Experimental feature
 
 # Smart Cropping and Framing
 cropping:

@@ -11,6 +11,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Optional, List
+import json
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -87,8 +88,9 @@ def cli(ctx, config: Optional[str], verbose: bool):
 @click.option('--lut', '-l', help='Path to LUT file (.cube) - uses default if not specified')
 @click.option('--max-segments', '-n', default=8, help='Maximum number of segments to create per video')
 @click.option('--use-default-lut', is_flag=True, default=True, help='Use default LUT from config (enabled by default)')
+@click.option('--no-music', is_flag=True, default=False, help='Disable background music for this processing run')
 @click.pass_context
-def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_default_lut):
+def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_default_lut, no_music):
     """🎬 Process video(s) to create shorts with full progress tracking.
 
     Usage:
@@ -154,6 +156,11 @@ def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_defau
 
         # Initialize processor
         processor = VideoProcessor(ctx.obj['config_path'])
+
+        # Temporarily disable music if requested
+        if no_music:
+            processor.music_manager.enable_music = False
+            print("🔇 Music disabled for this run")
 
         # Process each video
         total_output_files = []
@@ -512,6 +519,217 @@ def create_lut(ctx, name, size, style):
         progress.update(100, "LUT creation failed")
         click.echo(f"\n❌ LUT creation failed: {e}", err=True)
         sys.exit(1)
+
+
+@cli.command()
+@click.option('--duration', '-d', default=15.0, help='Target segment duration in seconds')
+@click.option('--show-details', '-v', is_flag=True, help='Show detailed analysis for each track')
+@click.option('--limit', '-l', default=10, help='Limit analysis to N tracks (0 = all tracks)')
+@click.option('--fast', '-f', is_flag=True, help='Fast mode: skip energy analysis, just show library')
+def music_analyze(duration, show_details, limit, fast):
+    """Analyze music files and show the best segments for video use."""
+    try:
+        from src.core.music_manager import MusicManager
+        from src.utils.config import Config
+    except ImportError:
+        from core.music_manager import MusicManager
+        from utils.config import Config
+
+    config = Config()
+    music_manager = MusicManager(config)
+
+    if not music_manager.enable_music:
+        click.echo("❌ Music is disabled in config")
+        return
+
+    music_files = music_manager.get_music_files()
+    if not music_files:
+        click.echo("❌ No music files found in music/ directory")
+        return
+
+    click.echo(f"🎵 Found {len(music_files)} music files")
+
+    if fast:
+        click.echo("⚡ Fast mode: Showing library without energy analysis")
+        click.echo("   Use --limit 5 to analyze just a few tracks")
+        click.echo()
+
+        for i, music_file in enumerate(music_files[:20], 1):  # Show first 20
+            filename = os.path.basename(music_file)
+            file_size = os.path.getsize(music_file) / (1024 * 1024)  # MB
+            click.echo(f"   {i:2d}. {filename:<40} ({file_size:.1f}MB)")
+
+        if len(music_files) > 20:
+            click.echo(f"   ... and {len(music_files) - 20} more tracks")
+
+        click.echo(f"\n💡 To analyze tracks: python src/cli.py music-analyze --limit 5")
+        return
+
+    # Limit tracks for analysis
+    if limit > 0:
+        music_files = music_files[:limit]
+        click.echo(f"⚡ Analyzing first {len(music_files)} tracks (use --limit 0 for all)")
+    else:
+        click.echo(f"🐌 Analyzing ALL {len(music_files)} tracks (this will take a while...)")
+
+    click.echo(f"🎯 Target duration: {duration}s")
+    click.echo()
+
+    results = []
+
+    with click.progressbar(music_files, label='Analyzing music') as files:
+        for music_file in files:
+            try:
+                segment_info = music_manager.find_best_music_segment(music_file, duration)
+
+                # Get track duration for context (fast method)
+                try:
+                    import librosa
+                    y, sr = librosa.load(music_file, duration=5)  # Just load 5s to get sample rate
+                    # Use ffprobe for duration (much faster)
+                    import subprocess
+                    result = subprocess.run([
+                        'ffprobe', '-v', 'quiet', '-print_format', 'json',
+                        '-show_format', music_file
+                    ], capture_output=True, text=True)
+
+                    if result.returncode == 0:
+                        import json
+                        data = json.loads(result.stdout)
+                        track_duration = float(data['format']['duration'])
+                    else:
+                        # Fallback to librosa
+                        y_full, _ = librosa.load(music_file, duration=None)
+                        track_duration = len(y_full) / sr
+                except:
+                    track_duration = 0
+
+                results.append({
+                    'file': music_file,
+                    'filename': os.path.basename(music_file),
+                    'duration': track_duration,
+                    'best_start': segment_info['start_time'],
+                    'energy_score': segment_info['energy_score']
+                })
+
+            except Exception as e:
+                click.echo(f"❌ Error analyzing {os.path.basename(music_file)}: {e}")
+
+    # Sort by energy score (best first)
+    results.sort(key=lambda x: x['energy_score'], reverse=True)
+
+    click.echo("\n🎯 Best Music Segments (sorted by energy):")
+    click.echo("=" * 70)
+
+    for i, result in enumerate(results, 1):
+        energy_bar = "█" * int(result['energy_score'] * 20)
+        energy_bar = energy_bar.ljust(20, "░")
+
+        click.echo(f"{i:2d}. {result['filename'][:30]:<30}")
+        click.echo(f"    ⚡ Energy: [{energy_bar}] {result['energy_score']:.3f}")
+        click.echo(f"    🎵 Best segment: {result['best_start']:.1f}s - {result['best_start'] + duration:.1f}s")
+        click.echo(f"    ⏱️  Track length: {result['duration']:.1f}s")
+
+        if show_details:
+            percentage = (result['best_start'] / result['duration']) * 100 if result['duration'] > 0 else 0
+            click.echo(f"    📊 Segment position: {percentage:.1f}% through track")
+
+        click.echo()
+
+    # Summary stats
+    if results:
+        avg_energy = sum(r['energy_score'] for r in results) / len(results)
+        best_track = results[0]
+
+        click.echo("📈 Summary:")
+        click.echo(f"   • Average energy score: {avg_energy:.3f}")
+        click.echo(f"   • Best track: {best_track['filename']} (energy: {best_track['energy_score']:.3f})")
+        click.echo(f"   • Cache location: .cache/music_analysis.json")
+
+        # Show distribution of best segments
+        early_segments = sum(1 for r in results if r['best_start'] < r['duration'] * 0.33)
+        middle_segments = sum(1 for r in results if 0.33 <= r['best_start'] / r['duration'] < 0.67)
+        late_segments = sum(1 for r in results if r['best_start'] >= r['duration'] * 0.67)
+
+        click.echo(f"   • Segment distribution: {early_segments} early, {middle_segments} middle, {late_segments} late")
+
+        if limit > 0 and len(music_files) < len(music_manager.get_music_files()):
+            remaining = len(music_manager.get_music_files()) - len(music_files)
+            click.echo(f"   • {remaining} tracks not analyzed (use --limit 0 for all)")
+
+    click.echo(f"\n💡 Tips:")
+    click.echo(f"   • Use --fast for quick library overview")
+    click.echo(f"   • Use --limit 5 to analyze just your best tracks")
+    click.echo(f"   • Results are cached - re-running is instant!")
+
+
+@cli.command()
+def music_check():
+    """Check music library status and show available tracks."""
+    try:
+        from src.core.music_manager import MusicManager
+        from src.utils.config import Config
+    except ImportError:
+        from core.music_manager import MusicManager
+        from utils.config import Config
+
+    config = Config()
+    music_manager = MusicManager(config)
+
+    click.echo("🎵 Music Library Status")
+    click.echo("=" * 40)
+
+    if not music_manager.enable_music:
+        click.echo("❌ Music is disabled in config.yaml")
+        click.echo("   Set 'enable_music: true' to enable")
+        return
+
+    music_files = music_manager.get_music_files()
+
+    if not music_files:
+        click.echo("❌ No music files found")
+        click.echo("   Add .mp3, .wav, .m4a, or .flac files to the music/ directory")
+        return
+
+    click.echo(f"✅ Found {len(music_files)} music files:")
+
+    total_duration = 0
+    for i, music_file in enumerate(music_files, 1):
+        filename = os.path.basename(music_file)
+        file_size = os.path.getsize(music_file) / (1024 * 1024)  # MB
+
+        # Try to get duration
+        try:
+            import librosa
+            y, sr = librosa.load(music_file, duration=None)
+            duration = len(y) / sr
+            total_duration += duration
+            duration_str = f"{duration:.1f}s"
+        except:
+            duration_str = "unknown"
+
+        click.echo(f"   {i:2d}. {filename:<30} ({file_size:.1f}MB, {duration_str})")
+
+    if total_duration > 0:
+        click.echo(f"\n📊 Total music library: {total_duration/60:.1f} minutes")
+
+    # Check cache status
+    cache_file = os.path.join('.cache', 'music_analysis.json')
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'r') as f:
+                cache_data = json.load(f)
+            click.echo(f"💾 Analysis cache: {len(cache_data)} cached analyses")
+        except:
+            click.echo("💾 Analysis cache: present but unreadable")
+    else:
+        click.echo("💾 Analysis cache: not created yet")
+
+    click.echo(f"\n⚙️  Music settings:")
+    click.echo(f"   • Volume: {config.get('audio.music_volume', 0.3)}")
+    click.echo(f"   • Fade in: {config.get('audio.fade_in_duration', 1.0)}s")
+    click.echo(f"   • Fade out: {config.get('audio.fade_out_duration', 1.0)}s")
+    click.echo(f"   • Random selection: {config.get('audio.random_selection', True)}")
 
 
 def main():
