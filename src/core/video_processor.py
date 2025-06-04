@@ -12,6 +12,7 @@ from pathlib import Path
 import datetime
 import json
 import os
+import subprocess
 
 # Handle imports for both CLI and module usage
 try:
@@ -181,25 +182,88 @@ class VideoProcessor:
             raise
 
     def _select_best_segments(self, scenes: List[Dict[str, Any]], max_segments: int) -> List[Dict[str, Any]]:
-        """Select best segments from detected scenes."""
+        """Select best segments from detected scenes, prioritizing action and avoiding boring content."""
         # Sort scenes by score (highest first)
         sorted_scenes = sorted(scenes, key=lambda x: x.get('score', 0), reverse=True)
 
-        # Filter scenes that meet duration requirements
-        min_duration = self.config.get('segmentation.min_duration', 15)
-        max_duration = self.config.get('segmentation.max_duration', 60)
+        # Filter scenes that meet duration requirements (strict for shorts)
+        min_duration = self.config.get('segmentation.min_duration', 5)
+        max_duration = self.config.get('segmentation.max_duration', 15)
 
-        valid_scenes = [
-            scene for scene in sorted_scenes
-            if min_duration <= scene['duration'] <= max_duration
-        ]
+        valid_scenes = []
+        for scene in sorted_scenes:
+            duration = scene['duration']
+            if min_duration <= duration <= max_duration:
+                # Additional filtering for high-quality segments
+                metrics = scene.get('metrics', {})
 
-        # Select top segments
-        selected = valid_scenes[:max_segments]
+                # Require minimum motion for FPV footage
+                motion = metrics.get('motion_magnitude', 0.0)
+                if motion < 0.03:  # Skip very low motion segments
+                    continue
 
-        self.logger.info(f"Selected {len(selected)} segments from {len(scenes)} detected scenes")
+                # Require minimum visual interest
+                visual_interest = metrics.get('visual_interest', 0.0)
+                if visual_interest < 0.2:  # Skip boring visual content
+                    continue
+
+                valid_scenes.append(scene)
+
+        # Select top segments, ensuring variety
+        selected = []
+        for scene in valid_scenes:
+            if len(selected) >= max_segments:
+                break
+
+            # Check for overlap with already selected scenes
+            overlap = False
+            for selected_scene in selected:
+                if self._scenes_overlap(scene, selected_scene):
+                    overlap = True
+                    break
+
+            if not overlap:
+                selected.append(scene)
+
+        # If we don't have enough segments, relax the criteria
+        if len(selected) < max_segments and len(valid_scenes) > len(selected):
+            self.logger.warning(f"Only found {len(selected)} high-quality segments, adding more with relaxed criteria")
+
+            for scene in valid_scenes:
+                if len(selected) >= max_segments:
+                    break
+
+                if scene not in selected:
+                    # Check for minimal overlap
+                    overlap = False
+                    for selected_scene in selected:
+                        if self._scenes_overlap(scene, selected_scene, threshold=0.1):  # Stricter overlap
+                            overlap = True
+                            break
+
+                    if not overlap:
+                        selected.append(scene)
+
+        self.logger.info(f"Selected {len(selected)} high-action segments from {len(scenes)} detected scenes")
 
         return selected
+
+    def _scenes_overlap(self, scene1: Dict[str, Any], scene2: Dict[str, Any], threshold: Optional[float] = None) -> bool:
+        """Check if two scenes overlap significantly."""
+        if threshold is None:
+            threshold = self.config.get('segmentation.overlap_threshold', 0.3)
+
+        # Calculate overlap
+        start = max(scene1['start_time'], scene2['start_time'])
+        end = min(scene1['end_time'], scene2['end_time'])
+
+        if start >= end:
+            return False  # No overlap
+
+        overlap_duration = end - start
+        min_duration = min(scene1['duration'], scene2['duration'])
+
+        return (overlap_duration / min_duration) > threshold
 
     def _process_segment_with_progress(
         self,
@@ -209,34 +273,29 @@ class VideoProcessor:
         segment_index: int,
         lut_path: Optional[str]
     ) -> Optional[str]:
-        """Process a single segment with detailed progress tracking."""
+        """Process a single segment with fast FFmpeg-based processing."""
         try:
             # Calculate segment info
             start_time = segment['start_time']
             end_time = segment['end_time']
             duration = segment['duration']
 
-            # Open input video
-            cap = cv2.VideoCapture(input_path)
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-            # Calculate frame range
-            start_frame = int(start_time * fps)
-            end_frame = int(end_time * fps)
-            total_segment_frames = end_frame - start_frame
-
             # Generate output filename
             timestamp = int(start_time)
             output_filename = f"short_{segment_index + 1:02d}_{timestamp}s.mp4"
             output_path = os.path.join(output_dir, output_filename)
 
-            # Calculate output dimensions (9:16 aspect ratio)
+            # Get video info for crop calculation
+            cap = cv2.VideoCapture(input_path)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            cap.release()
+
+            # Calculate crop parameters for 9:16 aspect ratio
             target_width = 1080
             target_height = 1920
 
-            # Determine crop area (center crop)
             if width / height > target_width / target_height:
                 # Video is wider, crop horizontally
                 crop_height = height
@@ -252,69 +311,58 @@ class VideoProcessor:
 
             print(f"   📐 Crop: {crop_width}x{crop_height} → {target_width}x{target_height}")
 
-            # Setup video writer
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(output_path, fourcc, fps, (target_width, target_height))
+            # Use direct FFmpeg command for reliability and speed
+            print(f"   ⚡ Using FFmpeg for fast processing...")
 
-            # Seek to start frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+            # Build FFmpeg command
+            cmd = [
+                'ffmpeg', '-i', input_path,
+                '-ss', str(start_time),
+                '-t', str(duration),
+                '-vf', f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height}',
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-r', '30',
+                '-pix_fmt', 'yuv420p',
+                '-y',  # Overwrite output
+                output_path
+            ]
 
-            # Load LUT if provided
-            lut = None
+            # Add LUT filter if provided
             if lut_path and os.path.exists(lut_path):
-                try:
-                    from ..utils.lut_loader import LUTLoader
-                    lut = LUTLoader.load_cube(lut_path)
-                    print(f"   🎨 Loaded LUT: {lut.title}")
-                except Exception as e:
-                    print(f"   ⚠️  LUT loading failed: {e}")
+                print(f"   🎨 Applying LUT: {os.path.basename(lut_path)}")
+                # Insert LUT filter into the video filter chain
+                vf_chain = f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height},lut3d={lut_path}'
+                cmd[cmd.index('-vf') + 1] = vf_chain
 
-            frame_count = 0
+            # Try hardware encoding first
+            try:
+                # Check if NVENC is available
+                result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, timeout=5)
+                if 'h264_nvenc' in result.stdout:
+                    cmd[cmd.index('libx264')] = 'h264_nvenc'
+                    print(f"   🚀 Using NVIDIA hardware encoding")
+            except:
+                pass
 
-            # Process frames with progress
-            print(f"   🎞️  Processing {total_segment_frames} frames...")
+            # Run FFmpeg
+            print(f"   🎞️  Processing with FFmpeg...")
 
-            while frame_count < total_segment_frames:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode != 0:
+                    # If hardware encoding failed, try software
+                    if 'h264_nvenc' in cmd:
+                        print(f"   ⚠️  Hardware encoding failed, trying software encoding...")
+                        cmd[cmd.index('h264_nvenc')] = 'libx264'
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
-                # Show progress every 30 frames
-                if frame_count % 30 == 0 or frame_count == total_segment_frames - 1:
-                    percentage = (frame_count / total_segment_frames) * 100
-                    bar_width = 20
-                    filled = int(bar_width * percentage / 100)
-                    bar = "█" * filled + "░" * (bar_width - filled)
-                    print(f"\r   {bar} {percentage:5.1f}% Frame {frame_count + 1}/{total_segment_frames}", end="", flush=True)
+                    if result.returncode != 0:
+                        raise Exception(f"FFmpeg failed: {result.stderr}")
 
-                # Apply color grading if LUT is available
-                if lut:
-                    try:
-                        # Convert to float [0,1]
-                        frame_float = frame.astype(np.float32) / 255.0
-                        # Apply LUT
-                        graded_frame = lut.apply(frame_float, intensity=0.8)
-                        # Convert back to uint8
-                        frame = (graded_frame * 255).astype(np.uint8)
-                    except Exception as e:
-                        # If LUT fails, continue without it
-                        pass
-
-                # Crop frame
-                cropped = frame[crop_y:crop_y + crop_height, crop_x:crop_x + crop_width]
-
-                # Resize to target resolution
-                resized = cv2.resize(cropped, (target_width, target_height))
-
-                # Write frame
-                out.write(resized)
-                frame_count += 1
-
-            print()  # New line after progress bar
-
-            # Cleanup
-            cap.release()
-            out.release()
+            except subprocess.TimeoutExpired:
+                raise Exception("FFmpeg processing timed out")
 
             # Verify output file
             if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
@@ -443,22 +491,6 @@ class VideoProcessor:
                 selected.append(scene)
 
         return selected
-
-    def _scenes_overlap(self, scene1: SceneSegment, scene2: SceneSegment) -> bool:
-        """Check if two scenes overlap significantly."""
-        overlap_threshold = self.config.get('segmentation.overlap_threshold', 0.3)
-
-        # Calculate overlap
-        start = max(scene1.start_time, scene2.start_time)
-        end = min(scene1.end_time, scene2.end_time)
-
-        if start >= end:
-            return False  # No overlap
-
-        overlap_duration = end - start
-        min_duration = min(scene1.duration, scene2.duration)
-
-        return (overlap_duration / min_duration) > overlap_threshold
 
     def _process_scene(self, input_path: str, scene: SceneSegment,
                       output_path: Path, lut_path: Optional[str],

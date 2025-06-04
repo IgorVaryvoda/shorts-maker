@@ -16,25 +16,32 @@ video:
 
 # Scene Detection and Segmentation
 segmentation:
-  # Scene detection thresholds
-  scene_threshold: 0.4          # Threshold for scene change detection (0.0-1.0)
-  motion_threshold: 0.3         # Threshold for motion detection (0.0-1.0)
+  # Scene detection thresholds (optimized for short segments)
+  scene_threshold: 0.08         # Much lower for more scene detection
+  motion_threshold: 0.02        # Lower to catch subtle changes
 
-  # Frame sampling (frames per second to analyze)
-  frame_sample_rate: 2.0        # Increased from 0.5 to 2.0 for faster processing
+  # Frame sampling (frames per second to analyze) - adaptive sampling enabled
+  frame_sample_rate: 0.3        # Increased for better detection of short scenes
 
-  # Duration constraints (seconds)
-  min_duration: 15              # Minimum segment duration
-  max_duration: 60              # Maximum segment duration
-  target_duration: 30           # Preferred segment duration
+  # Duration constraints (seconds) - optimized for shorts
+  min_duration: 5               # Minimum 5 seconds
+  max_duration: 15              # Maximum 15 seconds for proper shorts
+  target_duration: 10           # Target 10-second shorts
 
   # Overlap handling
-  overlap_threshold: 0.3        # Maximum allowed overlap between segments
+  overlap_threshold: 0.3        # Reduced overlap for more distinct segments
 
-  # Scoring weights for segment selection
+  # Content filtering (avoid boring segments)
+  content_filtering:
+    avoid_low_motion: true      # Skip segments with very low motion (landings)
+    min_motion_threshold: 0.05  # Minimum motion required
+    avoid_static_scenes: true   # Skip static/boring scenes
+    min_visual_interest: 0.3    # Minimum visual interest required
+
+  # Scoring weights for segment selection (optimized for FPV footage)
   scoring:
-    visual_interest: 0.6        # Weight for visual interest score
-    motion_activity: 0.4        # Weight for motion activity score
+    visual_interest: 0.6        # High weight for visual content
+    motion_activity: 0.4        # Important for FPV action
 
 # Color Grading and LUT Processing
 color_grading:
