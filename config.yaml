@@ -20,18 +20,18 @@ segmentation:
   scene_threshold: 0.05         # Very low for maximum scene detection
   motion_threshold: 0.01        # Very low to catch all motion changes
 
-  # Frame sampling (frames per second to analyze) - higher for better detection
-  frame_sample_rate: 0.5        # Increased for much better scene detection
+  # Frame sampling (frames per second to analyze) - higher for comprehensive detection
+  frame_sample_rate: 1.0        # Increased to 1 fps for comprehensive coverage
 
-  # Duration constraints (seconds) - dynamic based on content
-  min_duration: 3               # Minimum 3 seconds for very short clips
+  # Duration constraints (seconds) - optimized for 10-20 second segments
+  min_duration: 8               # Minimum 8 seconds (was 3)
   max_duration: 25              # Allow up to 25 seconds for epic content
-  target_duration: 12           # Target around 12 seconds but flexible
+  target_duration: 15           # Target 15 seconds (was 12)
 
-  # Dynamic duration settings
+  # Dynamic duration settings - favor longer segments
   dynamic_duration: true        # Enable content-based duration
-  quality_extension_threshold: 0.6  # Extend segments with score > 0.6
-  max_extension_duration: 10    # Max extra seconds for high-quality content
+  quality_extension_threshold: 0.4  # Lower threshold to extend more segments (was 0.6)
+  max_extension_duration: 15    # Allow up to 15 extra seconds (was 10)
 
   # Overlap handling
   overlap_threshold: 0.2        # Lower overlap for more distinct segments

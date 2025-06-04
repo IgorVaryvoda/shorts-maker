@@ -154,35 +154,37 @@ class FastFPVSceneDetector:
         return scenes
 
     def _calculate_adaptive_sampling(self, total_frames: int, fps: float) -> List[int]:
-        """Calculate adaptive frame sampling for better quality."""
+        """Calculate uniform sampling to ensure we don't miss any good content."""
         base_interval = max(1, int(fps / self.frame_sample_rate))
 
-        if not self.adaptive_sampling:
-            return list(range(0, total_frames, base_interval))
+        # Use uniform sampling across the entire video to catch all content
+        indices = list(range(0, total_frames, base_interval))
 
-        # Adaptive sampling: more frames at the beginning and end, fewer in middle
-        indices = []
+        # Add some extra samples at key intervals to catch transitions
+        # Sample every 5 seconds regardless of base rate
+        five_second_interval = int(fps * 5)
+        for i in range(0, total_frames, five_second_interval):
+            if i not in indices:
+                indices.append(i)
 
-        # Dense sampling for first 30 seconds (scene changes more likely)
-        dense_frames = min(int(30 * fps), total_frames // 3)
-        dense_interval = max(1, int(fps / 1.0))  # 1 fps for first part
-        indices.extend(range(0, dense_frames, dense_interval))
+        # Add samples at 1/4, 1/2, 3/4 points to ensure middle coverage
+        quarter_points = [
+            total_frames // 4,
+            total_frames // 2,
+            (3 * total_frames) // 4
+        ]
 
-        # Sparse sampling for middle section
-        middle_start = dense_frames
-        middle_end = total_frames - dense_frames
-        if middle_end > middle_start:
-            sparse_interval = max(base_interval * 2, int(fps / 0.1))  # 0.1 fps for middle
-            indices.extend(range(middle_start, middle_end, sparse_interval))
-
-        # Dense sampling for last 30 seconds
-        if total_frames > dense_frames:
-            final_start = max(middle_end, total_frames - dense_frames)
-            indices.extend(range(final_start, total_frames, dense_interval))
+        for point in quarter_points:
+            # Add several samples around each quarter point
+            for offset in range(-int(fps * 2), int(fps * 2), int(fps * 0.5)):
+                sample_frame = point + offset
+                if 0 <= sample_frame < total_frames and sample_frame not in indices:
+                    indices.append(sample_frame)
 
         # Remove duplicates and sort
         indices = sorted(list(set(indices)))
 
+        self.logger.info(f"Uniform sampling: {len(indices)} frames across entire video")
         return indices
 
     def _process_frame_batch(
@@ -261,88 +263,101 @@ class FastFPVSceneDetector:
         return metrics
 
     def _detect_scene_boundaries_fast(self, frame_data: List[Dict[str, Any]]) -> List[int]:
-        """Aggressive scene boundary detection to find maximum number of interesting segments."""
+        """Scene boundary detection optimized for 10-20 second segments."""
         if len(frame_data) < 2:
             return [0, len(frame_data) - 1]
 
         boundaries = [0]  # Start with first frame
 
-        # Use very small window for maximum sensitivity
-        window_size = 2
+        # Collect all metrics for comprehensive analysis
         scene_changes = []
         motion_scores = []
         visual_scores = []
+        contrast_scores = []
 
-        # Calculate all metrics for analysis
         for i in range(len(frame_data)):
             metrics = frame_data[i]['metrics']
-            scene_change = metrics.get('scene_change', 0.0)
-            motion = metrics.get('motion_magnitude', 0.0)
-            visual = metrics.get('visual_interest', 0.0)
+            scene_changes.append(metrics.get('scene_change', 0.0))
+            motion_scores.append(metrics.get('motion_magnitude', 0.0))
+            visual_scores.append(metrics.get('visual_interest', 0.0))
+            contrast_scores.append(metrics.get('contrast', 0.0))
 
-            scene_changes.append(scene_change)
-            motion_scores.append(motion)
-            visual_scores.append(visual)
+        # Minimum distance between boundaries for 10+ second segments
+        min_boundary_distance = max(8, int(len(frame_data) * 0.05))  # At least 8 frames or 5% of video
 
-        # Find ALL significant changes (very aggressive)
-        for i in range(window_size, len(scene_changes) - window_size):
-            current_score = scene_changes[i]
-            current_motion = motion_scores[i]
-            current_visual = visual_scores[i]
+        # Multiple detection strategies with longer segment focus
 
-            # Multiple criteria for scene detection
-            is_scene_boundary = False
-
-            # 1. Traditional scene change detection (lowered threshold)
-            if current_score > self.scene_threshold:
-                window_scores = scene_changes[i-window_size:i+window_size+1]
-                if current_score >= max(window_scores) * 0.8:  # More lenient peak detection
-                    is_scene_boundary = True
-
-            # 2. Motion-based detection (sudden motion changes)
-            if i > 5:  # Need some history
-                recent_motion = motion_scores[i-5:i]
-                avg_recent_motion = sum(recent_motion) / len(recent_motion)
-                if current_motion > avg_recent_motion * 1.5 and current_motion > 0.03:
-                    is_scene_boundary = True
-
-            # 3. Visual interest spikes
-            if i > 3:
-                recent_visual = visual_scores[i-3:i]
-                avg_recent_visual = sum(recent_visual) / len(recent_visual)
-                if current_visual > avg_recent_visual * 1.3 and current_visual > 0.4:
-                    is_scene_boundary = True
-
-            # Add boundary if any criteria met and minimum distance maintained
-            if is_scene_boundary:
-                if len(boundaries) == 0 or i - boundaries[-1] > 5:  # Very short minimum distance
+        # 1. Traditional scene change detection (significant changes only)
+        for i in range(5, len(scene_changes) - 5):
+            if scene_changes[i] > self.scene_threshold * 1.5:  # Higher threshold for longer segments
+                if len(boundaries) == 0 or i - boundaries[-1] > min_boundary_distance:
                     boundaries.append(i)
 
-        # Force even more segments if we still don't have enough
-        if len(boundaries) <= 3:  # Less than 3 segments
-            self.logger.warning("Forcing many more segments for maximum content extraction")
+        # 2. Major motion changes (significant action sequences)
+        motion_threshold = max(0.04, np.percentile(motion_scores, 80))  # Higher threshold
+        for i in range(10, len(motion_scores) - 10):
+            current_motion = motion_scores[i]
+            if current_motion > motion_threshold:
+                # Check if this is a major motion increase
+                prev_avg = np.mean(motion_scores[i-10:i])
+                if current_motion > prev_avg * 2.0:  # More significant change required
+                    if len(boundaries) == 0 or i - boundaries[-1] > min_boundary_distance:
+                        boundaries.append(i)
 
-            total_duration = frame_data[-1]['timestamp'] - frame_data[0]['timestamp']
-            segment_duration = 8  # Force 8-second segments initially
+        # 3. Strong visual interest peaks only
+        visual_threshold = max(0.5, np.percentile(visual_scores, 75))  # Higher threshold
+        for i in range(5, len(visual_scores) - 5):
+            current_visual = visual_scores[i]
+            if current_visual > visual_threshold:
+                # Check if this is a strong local peak
+                window = visual_scores[i-5:i+6]
+                if current_visual >= max(window) * 0.95:  # Must be clear peak
+                    if len(boundaries) == 0 or i - boundaries[-1] > min_boundary_distance:
+                        boundaries.append(i)
 
-            # Create segments every 8 seconds, but adjust based on content
-            boundaries = [0]
-            current_time = segment_duration
+        # 4. Major contrast changes only
+        for i in range(5, len(contrast_scores) - 5):
+            current_contrast = contrast_scores[i]
+            if i > 10:
+                prev_avg = np.mean(contrast_scores[i-10:i])
+                if abs(current_contrast - prev_avg) > 0.08:  # More significant contrast change
+                    if len(boundaries) == 0 or i - boundaries[-1] > min_boundary_distance:
+                        boundaries.append(i)
+
+        # 5. Force boundaries for very long videos (every 25-30 seconds)
+        total_duration = frame_data[-1]['timestamp'] - frame_data[0]['timestamp']
+        if total_duration > 60:  # Only for longer videos
+            interval_duration = 25  # Force boundary every 25 seconds (was 15)
+            current_time = interval_duration
 
             for i, frame in enumerate(frame_data):
                 if frame['timestamp'] >= current_time:
-                    boundaries.append(i)
-                    current_time += segment_duration
+                    if len(boundaries) == 0 or i - boundaries[-1] > min_boundary_distance:
+                        boundaries.append(i)
+                    current_time += interval_duration
 
-                    # Create many more segments
-                    if len(boundaries) >= 20:  # Max 19 segments
-                        break
+        # Remove duplicates and sort
+        boundaries = sorted(list(set(boundaries)))
+
+        # Ensure we don't have too many short segments
+        if len(boundaries) > 12 and total_duration > 120:  # Max 12 segments for 2+ minute videos
+            self.logger.warning("Too many boundaries detected, keeping only strongest ones")
+            # Keep only the strongest boundaries based on scene change scores
+            boundary_scores = []
+            for b in boundaries[1:-1]:  # Exclude first and last
+                if b < len(scene_changes):
+                    boundary_scores.append((scene_changes[b], b))
+
+            # Sort by score and keep top boundaries
+            boundary_scores.sort(reverse=True)
+            top_boundaries = [0] + [b for _, b in boundary_scores[:10]] + [boundaries[-1]]
+            boundaries = sorted(list(set(top_boundaries)))
 
         # Add final frame
         if boundaries[-1] != len(frame_data) - 1:
             boundaries.append(len(frame_data) - 1)
 
-        self.logger.info(f"Created {len(boundaries) - 1} scene boundaries using aggressive detection")
+        self.logger.info(f"Created {len(boundaries) - 1} scene boundaries optimized for 10-20s segments")
         return boundaries
 
     def _create_scene_segments(
