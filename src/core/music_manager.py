@@ -429,9 +429,8 @@ class MusicManager:
         """Build FFmpeg audio filter string."""
         filters = []
 
-        # Volume adjustment
-        if self.music_volume != 1.0:
-            filters.append(f"volume={self.music_volume}")
+        # Volume adjustment - always apply for consistency
+        filters.append(f"volume={self.music_volume}")
 
         # Fade in
         if self.fade_in_duration > 0:
