@@ -21,6 +21,7 @@ try:
     from .music_manager import MusicManager
     from ..utils.config import Config
     from ..utils.progress import VideoProcessingProgress, ProgressBar
+    from ..utils.stabilizer import VideoStabilizer
 except ImportError:
     # Fallback for CLI usage
     import sys
@@ -30,6 +31,7 @@ except ImportError:
     from core.music_manager import MusicManager
     from utils.config import Config
     from utils.progress import VideoProcessingProgress, ProgressBar
+    from utils.stabilizer import VideoStabilizer
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,7 @@ class VideoProcessor:
         self.scene_detector = FPVSceneDetector(self.config)
         self.color_grader = ColorGrader(self.config)
         self.music_manager = MusicManager(self.config)
+        self.stabilizer = VideoStabilizer(self.config.data)
         self.logger = logging.getLogger(__name__)
 
         # Video settings
@@ -67,7 +70,8 @@ class VideoProcessor:
         input_path: str,
         output_dir: str = "output",
         lut_path: Optional[str] = None,
-        max_segments: int = 3
+        max_segments: int = 3,
+        stabilize: bool = False
     ) -> List[str]:
         """
         Process a video to create shorts.
@@ -102,9 +106,42 @@ class VideoProcessor:
 
         print(f"📊 Video Info: {width}x{height}, {duration:.1f}s, {fps:.1f}fps, {total_frames:,} frames")
         print(f"🎯 Target: {max_segments} shorts, LUT: {os.path.basename(lut_path) if lut_path else 'None'}")
+        if stabilize:
+            print("🔧 Stabilization: Enabled")
         print("=" * 60)
 
         try:
+            # Stage 0: Video Stabilization (if requested)
+            processing_input_path = input_path
+            if stabilize:
+                print("\n🔧 Stage 0: Video Stabilization")
+                print("-" * 40)
+
+                def stabilization_progress_callback(percentage: float, message: str = ""):
+                    bar_width = 30
+                    filled = int(bar_width * percentage / 100)
+                    bar = "█" * filled + "░" * (bar_width - filled)
+                    print(f"\r{bar} {percentage:5.1f}% {message}", end="", flush=True)
+
+                stabilized_path = self.stabilizer.stabilize_video(
+                    input_path,
+                    progress_callback=stabilization_progress_callback
+                )
+
+                if stabilized_path:
+                    processing_input_path = stabilized_path
+                    print(f"\n✅ Video stabilized: {os.path.basename(stabilized_path)}")
+                else:
+                    print(f"\n⚠️  Stabilization failed, proceeding with original video")
+                    # Try simple stabilization as fallback
+                    print("   Trying simple stabilization...")
+                    stabilized_path = self.stabilizer.stabilize_video_simple(input_path)
+                    if stabilized_path:
+                        processing_input_path = stabilized_path
+                        print(f"   ✅ Simple stabilization successful: {os.path.basename(stabilized_path)}")
+                    else:
+                        print(f"   ⚠️  Simple stabilization also failed, using original video")
+
             # Stage 1: Scene Detection
             print("\n🎬 Stage 1: Scene Detection")
             print("-" * 40)
@@ -118,7 +155,7 @@ class VideoProcessor:
                     print(f"\r{bar} {percentage:5.1f}% {message}", end="", flush=True)
 
             scenes = self.scene_detector.detect_scenes(
-                input_path,
+                processing_input_path,
                 progress_callback=scene_progress_callback
             )
 
@@ -151,7 +188,7 @@ class VideoProcessor:
                 print(f"   Time: {segment['start_time']:.1f}s - {segment['end_time']:.1f}s ({segment['duration']:.1f}s)")
 
                 output_path = self._process_segment_with_progress(
-                    input_path,
+                    processing_input_path,
                     segment,
                     output_dir,
                     i,
@@ -177,6 +214,10 @@ class VideoProcessor:
                     print(f"  {i}. {os.path.basename(path)}")
             else:
                 print("❌ No shorts were created")
+
+            # Cleanup temporary stabilized files if needed
+            if stabilize and processing_input_path != input_path:
+                self.stabilizer.cleanup_temp_files()
 
             return output_paths
 

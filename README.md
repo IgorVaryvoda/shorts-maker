@@ -26,6 +26,7 @@ Automated video editing system for YouTube Shorts and TikTok, specifically optim
 
 ### 🎬 Video Processing
 - **Smart Cropping**: Automatic 9:16 aspect ratio conversion for vertical platforms
+- **Video Stabilization**: Gyroflow integration for professional stabilization
 - **Multiple Platforms**: YouTube Shorts, TikTok, Instagram Reels optimized
 - **Quality Presets**: High-quality encoding with GPU acceleration
 - **Organized Output**: Separate folders for each video processed
@@ -37,6 +38,30 @@ Automated video editing system for YouTube Shorts and TikTok, specifically optim
 - **Caching System**: Never re-analyzes the same song twice
 - **Multiple Formats**: MP3, WAV, M4A, AAC, OGG, FLAC support
 - **Auto-Mixing**: 30% volume with fade in/out effects
+
+## 📋 Requirements
+
+### System Requirements
+- **Python 3.9+**
+- **FFmpeg** (for video processing)
+- **NVIDIA GPU** (recommended for acceleration)
+- **Gyroflow** (optional, for video stabilization)
+
+### Installing Gyroflow (Optional)
+For video stabilization support, install Gyroflow:
+
+```bash
+# Download from official website
+# Visit: https://gyroflow.xyz/
+
+# Or install via package manager (if available)
+# Ubuntu/Debian: sudo apt install gyroflow
+# macOS: brew install gyroflow
+# Windows: Download from GitHub releases
+
+# Verify installation
+gyroflow --version
+```
 
 ## 🚀 Quick Start
 
@@ -112,6 +137,19 @@ python src/cli.py process video.mp4 --lut luts/my_custom.cube
 ```bash
 # Process specific directory
 python src/cli.py process --input-dir /path/to/videos --output-dir /path/to/output
+```
+
+### Video Stabilization
+
+```bash
+# Process with gyroflow stabilization
+python src/cli.py process --stabilize
+
+# Stabilize a single video
+python src/cli.py stabilize video.mp4
+
+# Stabilize with custom output path
+python src/cli.py stabilize video.mp4 --output stabilized_video.mp4
 ```
 
 ### Analysis (Preview Before Processing)
@@ -223,6 +261,14 @@ audio:
   fade_in_duration: 1.0            # 1 second fade in
   fade_out_duration: 1.0           # 1 second fade out
   random_selection: true           # Random track per video
+
+# Video Stabilization
+stabilization:
+  enabled: false                    # Enable by default
+  gyroflow_path: "gyroflow"        # Path to gyroflow executable
+  smoothness: 0.5                  # Stabilization smoothness (0.0-1.0)
+  lens_correction: true            # Apply lens distortion correction
+  horizon_lock: false              # Lock horizon (useful for FPV)
 ```
 
 ## 🔧 Algorithm Details

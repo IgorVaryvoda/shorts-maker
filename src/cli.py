@@ -89,14 +89,16 @@ def cli(ctx, config: Optional[str], verbose: bool):
 @click.option('--max-segments', '-n', default=8, help='Maximum number of segments to create per video')
 @click.option('--use-default-lut', is_flag=True, default=True, help='Use default LUT from config (enabled by default)')
 @click.option('--no-music', is_flag=True, default=False, help='Disable background music for this processing run')
+@click.option('--stabilize', is_flag=True, default=False, help='Stabilize videos using gyroflow before processing')
 @click.pass_context
-def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_default_lut, no_music):
+def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_default_lut, no_music, stabilize):
     """🎬 Process video(s) to create shorts with full progress tracking.
 
     Usage:
     - shorts-creator process video.mp4          # Process single video
     - shorts-creator process --input-dir ./     # Process all videos in directory
     - shorts-creator process                    # Process all videos in input/ directory with default LUT
+    - shorts-creator process --stabilize        # Process with gyroflow stabilization
     """
 
     try:
@@ -180,7 +182,8 @@ def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_defau
                     input_path=video_file,
                     output_dir=video_output_dir,
                     lut_path=lut_to_use,
-                    max_segments=max_segments
+                    max_segments=max_segments,
+                    stabilize=stabilize
                 )
 
                 if output_files:
@@ -459,6 +462,18 @@ def system_check(ctx):
     except (subprocess.TimeoutExpired, FileNotFoundError):
         print("❌ FFmpeg - Not found")
 
+    # Check Gyroflow
+    try:
+        result = subprocess.run(['gyroflow', '--version'],
+                              capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            version_line = result.stdout.strip()
+            print(f"✅ Gyroflow: {version_line}")
+        else:
+            print("❌ Gyroflow - Not working properly")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        print("ℹ️  Gyroflow - Not found (optional for stabilization)")
+
     # Check GPU
     print(f"\n🚀 GPU Support")
     print("-" * 15)
@@ -661,6 +676,74 @@ def music_analyze(duration, show_details, limit, fast):
     click.echo(f"   • Use --fast for quick library overview")
     click.echo(f"   • Use --limit 5 to analyze just your best tracks")
     click.echo(f"   • Results are cached - re-running is instant!")
+
+
+@cli.command()
+@click.argument('input_video', type=click.Path(exists=True))
+@click.option('--output', '-o', help='Output path for stabilized video')
+@click.pass_context
+def stabilize(ctx, input_video, output):
+    """🔧 Stabilize a video using gyroflow."""
+
+    print("🔧 Video Stabilization")
+    print("=" * 40)
+    print(f"📁 Input: {input_video}")
+    if output:
+        print(f"📁 Output: {output}")
+    print("=" * 40)
+
+    try:
+        # Load config
+        config = Config(ctx.obj['config_path'])
+
+        # Initialize stabilizer
+        from src.utils.stabilizer import VideoStabilizer
+        stabilizer = VideoStabilizer(config.data)
+
+        # Check if gyroflow is available
+        if not stabilizer.is_gyroflow_available():
+            click.echo("❌ Gyroflow is not available. Please install gyroflow and ensure it's in your PATH.", err=True)
+            click.echo("💡 Visit https://gyroflow.xyz/ for installation instructions.", err=True)
+            return
+
+        def progress_callback(percentage: float, message: str = ""):
+            bar_width = 40
+            filled = int(bar_width * percentage / 100)
+            bar = "█" * filled + "░" * (bar_width - filled)
+            print(f"\r{bar} {percentage:5.1f}% {message}", end="", flush=True)
+
+        # Stabilize video
+        stabilized_path = stabilizer.stabilize_video(
+            input_video,
+            output_path=output,
+            progress_callback=progress_callback
+        )
+
+        if stabilized_path:
+            file_size = os.path.getsize(stabilized_path) / (1024 * 1024)
+            print(f"\n✅ Video stabilized successfully!")
+            print(f"📁 Output: {stabilized_path}")
+            print(f"📊 File size: {file_size:.1f}MB")
+        else:
+            print(f"\n❌ Stabilization failed")
+            # Try simple stabilization
+            print("🔄 Trying simple stabilization...")
+            stabilized_path = stabilizer.stabilize_video_simple(input_video)
+            if stabilized_path:
+                file_size = os.path.getsize(stabilized_path) / (1024 * 1024)
+                print(f"✅ Simple stabilization successful!")
+                print(f"📁 Output: {stabilized_path}")
+                print(f"📊 File size: {file_size:.1f}MB")
+            else:
+                print(f"❌ Simple stabilization also failed")
+                sys.exit(1)
+
+    except Exception as e:
+        click.echo(f"❌ Stabilization failed: {e}", err=True)
+        if ctx.obj['verbose']:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 @cli.command()

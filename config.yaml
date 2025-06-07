@@ -197,6 +197,25 @@ logging:
   debug_visualizations: false
   profile_performance: false
 
+# Video Stabilization
+stabilization:
+  # Gyroflow settings
+  enabled: false                    # Enable/disable stabilization by default
+  gyroflow_path: "gyroflow"        # Path to gyroflow executable (assumes it's in PATH)
+
+  # Processing settings
+  temp_dir: ".cache/stabilization" # Directory for temporary stabilized files
+  keep_temp_files: false           # Keep temporary stabilized files after processing
+
+  # Gyroflow parameters
+  smoothness: 0.5                  # Stabilization smoothness (0.0 to 1.0)
+  lens_correction: true            # Apply lens distortion correction
+  horizon_lock: false              # Lock horizon (useful for FPV footage)
+
+  # Output settings
+  output_suffix: "_stabilized"     # Suffix for stabilized video files
+  preserve_original: true          # Keep original files when stabilizing
+
 # Advanced Features
 advanced:
   # Experimental features
