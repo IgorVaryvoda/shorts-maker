@@ -101,8 +101,17 @@ class VideoProcessor:
         fps = cap.get(cv2.CAP_PROP_FPS)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        duration = total_frames / fps
         cap.release()
+
+        # Validate video properties
+        if fps <= 0:
+            raise ValueError(f"Invalid FPS value: {fps}. Video file may be corrupted or unsupported.")
+        if total_frames <= 0:
+            raise ValueError(f"Invalid frame count: {total_frames}. Video file may be corrupted or unsupported.")
+        if width <= 0 or height <= 0:
+            raise ValueError(f"Invalid video dimensions: {width}x{height}. Video file may be corrupted or unsupported.")
+
+        duration = total_frames / fps
 
         print(f"📊 Video Info: {width}x{height}, {duration:.1f}s, {fps:.1f}fps, {total_frames:,} frames")
         print(f"🎯 Target: {max_segments} shorts, LUT: {os.path.basename(lut_path) if lut_path else 'None'}")

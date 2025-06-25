@@ -5,9 +5,9 @@ video:
   # Output settings for social media platforms
   output_resolution: [1080, 1920]  # 9:16 aspect ratio (width, height)
   fps: 30
-  quality: "high"  # low, medium, high, ultra
+  quality: "ultra"  # low, medium, high, ultra
   codec: "h264"
-  bitrate: "5M"  # Video bitrate
+  bitrate: "10M"  # Video bitrate
   audio_bitrate: "128k"
 
   # Input handling
@@ -199,18 +199,18 @@ logging:
 
 # Video Stabilization
 stabilization:
-  # Gyroflow settings
+  # FFmpeg vidstab settings
   enabled: false                    # Enable/disable stabilization by default
-  gyroflow_path: "gyroflow"        # Path to gyroflow executable (assumes it's in PATH)
+  ffmpeg_path: "ffmpeg"            # Path to ffmpeg executable (assumes it's in PATH)
 
   # Processing settings
   temp_dir: ".cache/stabilization" # Directory for temporary stabilized files
   keep_temp_files: false           # Keep temporary stabilized files after processing
 
-  # Gyroflow parameters
-  smoothness: 0.5                  # Stabilization smoothness (0.0 to 1.0)
-  lens_correction: true            # Apply lens distortion correction
-  horizon_lock: false              # Lock horizon (useful for FPV footage)
+  # Stabilization parameters (FFmpeg vidstab)
+  smoothness: 10                   # Stabilization smoothness (higher = smoother, 1-100)
+  shakiness: 5                     # Shakiness detection sensitivity (1-10)
+  accuracy: 15                     # Motion detection accuracy (1-15, higher = more accurate)
 
   # Output settings
   output_suffix: "_stabilized"     # Suffix for stabilized video files

@@ -1,5 +1,5 @@
 """
-Video stabilization utility using Gyroflow.
+Video stabilization utility using FFmpeg's vidstab filters.
 """
 
 import os
@@ -14,53 +14,67 @@ logger = logging.getLogger(__name__)
 
 
 class VideoStabilizer:
-    """Video stabilization using Gyroflow."""
+    """Video stabilization using FFmpeg's vidstab filters."""
 
     def __init__(self, config: Dict[str, Any]):
         """Initialize the stabilizer with configuration."""
         self.config = config
         self.stabilization_config = config.get('stabilization', {})
 
-        # Gyroflow settings
-        self.gyroflow_path = self.stabilization_config.get('gyroflow_path', 'gyroflow')
+        # FFmpeg settings
+        self.ffmpeg_path = self.stabilization_config.get('ffmpeg_path', 'ffmpeg')
         self.temp_dir = self.stabilization_config.get('temp_dir', '.cache/stabilization')
         self.keep_temp_files = self.stabilization_config.get('keep_temp_files', False)
         self.preserve_original = self.stabilization_config.get('preserve_original', True)
         self.output_suffix = self.stabilization_config.get('output_suffix', '_stabilized')
 
-        # Gyroflow parameters
-        self.smoothness = self.stabilization_config.get('smoothness', 0.5)
-        self.lens_correction = self.stabilization_config.get('lens_correction', True)
-        self.horizon_lock = self.stabilization_config.get('horizon_lock', False)
+        # Stabilization parameters
+        self.smoothness = self.stabilization_config.get('smoothness', 10)  # FFmpeg vidstab smoothness
+        self.shakiness = self.stabilization_config.get('shakiness', 5)     # Shakiness detection
+        self.accuracy = self.stabilization_config.get('accuracy', 15)      # Accuracy of detection
 
         # Ensure temp directory exists
         os.makedirs(self.temp_dir, exist_ok=True)
 
-        logger.info(f"Initialized VideoStabilizer with gyroflow path: {self.gyroflow_path}")
+        logger.info(f"Initialized VideoStabilizer with FFmpeg vidstab filters")
 
-    def is_gyroflow_available(self) -> bool:
-        """Check if gyroflow is available in the system."""
+    def is_ffmpeg_available(self) -> bool:
+        """Check if FFmpeg with vidstab is available."""
         try:
+            # Check FFmpeg availability
             result = subprocess.run(
-                [self.gyroflow_path, '--version'],
+                [self.ffmpeg_path, '-version'],
                 capture_output=True,
                 text=True,
                 timeout=10
             )
-            if result.returncode == 0:
-                logger.info(f"Gyroflow found: {result.stdout.strip()}")
+            if result.returncode != 0:
+                logger.warning("FFmpeg not found")
+                return False
+
+            # Check if vidstab filters are available
+            result = subprocess.run(
+                [self.ffmpeg_path, '-filters'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if 'vidstabdetect' in result.stdout and 'vidstabtransform' in result.stdout:
+                logger.info("FFmpeg with vidstab filters is available")
                 return True
             else:
-                logger.warning(f"Gyroflow command failed: {result.stderr}")
+                logger.warning("FFmpeg found but vidstab filters not available")
                 return False
+
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
-            logger.warning(f"Gyroflow not found or not accessible: {e}")
+            logger.warning(f"FFmpeg not found or not accessible: {e}")
             return False
 
     def stabilize_video(self, input_path: str, output_path: Optional[str] = None,
                        progress_callback: Optional[callable] = None) -> Optional[str]:
         """
-        Stabilize a video using gyroflow.
+        Stabilize a video using FFmpeg's vidstab filters.
 
         Args:
             input_path: Path to input video file
@@ -70,8 +84,9 @@ class VideoStabilizer:
         Returns:
             Path to stabilized video file, or None if stabilization failed
         """
-        if not self.is_gyroflow_available():
-            logger.error("Gyroflow is not available. Please install gyroflow and ensure it's in your PATH.")
+        if not self.is_ffmpeg_available():
+            logger.error("FFmpeg with vidstab filters is not available.")
+            logger.info("Install FFmpeg with libvidstab support for video stabilization.")
             return None
 
         input_path = Path(input_path)
@@ -88,110 +103,102 @@ class VideoStabilizer:
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Create temporary transform file
+        transform_file = Path(self.temp_dir) / f"{input_path.stem}_transforms.trf"
+
         logger.info(f"Stabilizing video: {input_path} -> {output_path}")
 
-        if progress_callback:
-            progress_callback(0, "Starting gyroflow stabilization...")
-
         try:
-            # Build gyroflow command
-            cmd = [
-                self.gyroflow_path,
-                str(input_path),
-                '--output', str(output_path),
-                '--smoothness', str(self.smoothness)
+            # Step 1: Detect camera motion
+            if progress_callback:
+                progress_callback(10, "Analyzing camera motion...")
+
+            detect_cmd = [
+                self.ffmpeg_path,
+                '-i', str(input_path),
+                '-vf', f'vidstabdetect=shakiness={self.shakiness}:accuracy={self.accuracy}:result={transform_file}',
+                '-f', 'null',
+                '-'
             ]
 
-            # Add optional parameters
-            if self.lens_correction:
-                cmd.append('--lens-correction')
+            logger.debug(f"Running motion detection: {' '.join(detect_cmd)}")
 
-            if self.horizon_lock:
-                cmd.append('--horizon-lock')
-
-            logger.debug(f"Running gyroflow command: {' '.join(cmd)}")
-
-            if progress_callback:
-                progress_callback(10, "Running gyroflow...")
-
-            # Run gyroflow
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            detect_process = subprocess.run(
+                detect_cmd,
+                capture_output=True,
                 text=True,
-                universal_newlines=True
+                timeout=300  # 5 minute timeout
             )
 
-            # Monitor progress
-            stdout_lines = []
-            stderr_lines = []
+            if detect_process.returncode != 0:
+                logger.error(f"Motion detection failed: {detect_process.stderr}")
+                return None
 
-            while True:
-                stdout_line = process.stdout.readline()
-                stderr_line = process.stderr.readline()
+            if not transform_file.exists():
+                logger.error("Transform file was not created")
+                return None
 
-                if stdout_line:
-                    stdout_lines.append(stdout_line.strip())
-                    logger.debug(f"Gyroflow stdout: {stdout_line.strip()}")
+            # Step 2: Apply stabilization
+            if progress_callback:
+                progress_callback(50, "Applying stabilization...")
 
-                    # Try to extract progress information
-                    if progress_callback and ('progress' in stdout_line.lower() or '%' in stdout_line):
-                        try:
-                            # Look for percentage in the output
-                            import re
-                            match = re.search(r'(\d+)%', stdout_line)
-                            if match:
-                                percentage = int(match.group(1))
-                                progress_callback(10 + (percentage * 0.8), f"Stabilizing... {percentage}%")
-                        except:
-                            pass
+            stabilize_cmd = [
+                self.ffmpeg_path,
+                '-i', str(input_path),
+                '-vf', f'vidstabtransform=input={transform_file}:smoothing={self.smoothness}:crop=black',
+                '-c:a', 'copy',  # Copy audio without re-encoding
+                '-y',  # Overwrite output file
+                str(output_path)
+            ]
 
-                if stderr_line:
-                    stderr_lines.append(stderr_line.strip())
-                    logger.debug(f"Gyroflow stderr: {stderr_line.strip()}")
+            logger.debug(f"Running stabilization: {' '.join(stabilize_cmd)}")
 
-                if process.poll() is not None:
-                    break
+            stabilize_process = subprocess.run(
+                stabilize_cmd,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
 
-            # Get remaining output
-            remaining_stdout, remaining_stderr = process.communicate()
-            if remaining_stdout:
-                stdout_lines.extend(remaining_stdout.strip().split('\n'))
-            if remaining_stderr:
-                stderr_lines.extend(remaining_stderr.strip().split('\n'))
+            if stabilize_process.returncode != 0:
+                logger.error(f"Stabilization failed: {stabilize_process.stderr}")
+                return None
 
             if progress_callback:
-                progress_callback(90, "Finalizing stabilization...")
+                progress_callback(90, "Finalizing...")
 
-            # Check if gyroflow succeeded
-            if process.returncode == 0:
-                if output_path.exists():
-                    logger.info(f"Successfully stabilized video: {output_path}")
+            # Clean up transform file
+            if transform_file.exists():
+                transform_file.unlink()
 
-                    if progress_callback:
-                        progress_callback(100, "Stabilization complete!")
+            if output_path.exists():
+                logger.info(f"Successfully stabilized video: {output_path}")
 
-                    return str(output_path)
-                else:
-                    logger.error(f"Gyroflow completed but output file not found: {output_path}")
-                    return None
+                if progress_callback:
+                    progress_callback(100, "Stabilization complete!")
+
+                return str(output_path)
             else:
-                logger.error(f"Gyroflow failed with return code {process.returncode}")
-                logger.error(f"Stderr: {' '.join(stderr_lines)}")
+                logger.error("Stabilized video was not created")
                 return None
 
         except subprocess.TimeoutExpired:
-            logger.error("Gyroflow process timed out")
+            logger.error("Stabilization process timed out")
             return None
         except Exception as e:
-            logger.error(f"Error running gyroflow: {e}")
+            logger.error(f"Error during stabilization: {e}")
             return None
+        finally:
+            # Clean up transform file if it still exists
+            if transform_file.exists():
+                try:
+                    transform_file.unlink()
+                except:
+                    pass
 
     def stabilize_video_simple(self, input_path: str) -> Optional[str]:
         """
-        Simple stabilization with basic gyroflow command.
-        Falls back to this if the advanced method fails.
+        Simple stabilization with default settings.
 
         Args:
             input_path: Path to input video file
@@ -199,48 +206,7 @@ class VideoStabilizer:
         Returns:
             Path to stabilized video file, or None if stabilization failed
         """
-        if not self.is_gyroflow_available():
-            return None
-
-        input_path = Path(input_path)
-        output_path = input_path.parent / f"{input_path.stem}{self.output_suffix}{input_path.suffix}"
-
-        try:
-            # Simple gyroflow command
-            cmd = [self.gyroflow_path, str(input_path)]
-
-            logger.info(f"Running simple gyroflow stabilization: {' '.join(cmd)}")
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout
-            )
-
-            if result.returncode == 0:
-                # Gyroflow typically outputs to the same directory with a suffix
-                # Try to find the output file
-                possible_outputs = [
-                    input_path.parent / f"{input_path.stem}_stabilized{input_path.suffix}",
-                    input_path.parent / f"{input_path.stem}_gyroflow{input_path.suffix}",
-                    output_path
-                ]
-
-                for possible_output in possible_outputs:
-                    if possible_output.exists():
-                        logger.info(f"Found stabilized video: {possible_output}")
-                        return str(possible_output)
-
-                logger.warning("Gyroflow completed but couldn't find output file")
-                return None
-            else:
-                logger.error(f"Simple gyroflow failed: {result.stderr}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error in simple gyroflow stabilization: {e}")
-            return None
+        return self.stabilize_video(input_path)
 
     def cleanup_temp_files(self):
         """Clean up temporary files if not configured to keep them."""

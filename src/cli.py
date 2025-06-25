@@ -89,7 +89,7 @@ def cli(ctx, config: Optional[str], verbose: bool):
 @click.option('--max-segments', '-n', default=8, help='Maximum number of segments to create per video')
 @click.option('--use-default-lut', is_flag=True, default=True, help='Use default LUT from config (enabled by default)')
 @click.option('--no-music', is_flag=True, default=False, help='Disable background music for this processing run')
-@click.option('--stabilize', is_flag=True, default=False, help='Stabilize videos using gyroflow before processing')
+@click.option('--stabilize', is_flag=True, default=False, help='Stabilize videos using FFmpeg vidstab before processing')
 @click.pass_context
 def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_default_lut, no_music, stabilize):
     """🎬 Process video(s) to create shorts with full progress tracking.
@@ -98,7 +98,7 @@ def process(ctx, input_path, input_dir, output_dir, lut, max_segments, use_defau
     - shorts-creator process video.mp4          # Process single video
     - shorts-creator process --input-dir ./     # Process all videos in directory
     - shorts-creator process                    # Process all videos in input/ directory with default LUT
-    - shorts-creator process --stabilize        # Process with gyroflow stabilization
+    - shorts-creator process --stabilize        # Process with FFmpeg stabilization
     """
 
     try:
@@ -462,17 +462,16 @@ def system_check(ctx):
     except (subprocess.TimeoutExpired, FileNotFoundError):
         print("❌ FFmpeg - Not found")
 
-    # Check Gyroflow
+    # Check FFmpeg vidstab filters
     try:
-        result = subprocess.run(['gyroflow', '--version'],
+        result = subprocess.run(['ffmpeg', '-filters'],
                               capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            version_line = result.stdout.strip()
-            print(f"✅ Gyroflow: {version_line}")
+        if result.returncode == 0 and 'vidstabdetect' in result.stdout and 'vidstabtransform' in result.stdout:
+            print("✅ FFmpeg vidstab: Available for video stabilization")
         else:
-            print("❌ Gyroflow - Not working properly")
+            print("ℹ️  FFmpeg vidstab: Not available (optional for stabilization)")
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        print("ℹ️  Gyroflow - Not found (optional for stabilization)")
+        print("ℹ️  FFmpeg vidstab: Not found (optional for stabilization)")
 
     # Check GPU
     print(f"\n🚀 GPU Support")
@@ -683,7 +682,7 @@ def music_analyze(duration, show_details, limit, fast):
 @click.option('--output', '-o', help='Output path for stabilized video')
 @click.pass_context
 def stabilize(ctx, input_video, output):
-    """🔧 Stabilize a video using gyroflow."""
+    """🔧 Stabilize a video using FFmpeg vidstab."""
 
     print("🔧 Video Stabilization")
     print("=" * 40)
@@ -700,10 +699,11 @@ def stabilize(ctx, input_video, output):
         from src.utils.stabilizer import VideoStabilizer
         stabilizer = VideoStabilizer(config.data)
 
-        # Check if gyroflow is available
-        if not stabilizer.is_gyroflow_available():
-            click.echo("❌ Gyroflow is not available. Please install gyroflow and ensure it's in your PATH.", err=True)
-            click.echo("💡 Visit https://gyroflow.xyz/ for installation instructions.", err=True)
+        # Check if FFmpeg with vidstab is available
+        if not stabilizer.is_ffmpeg_available():
+            click.echo("❌ FFmpeg with vidstab is not available. Please install FFmpeg with libvidstab support.", err=True)
+            click.echo("💡 On Ubuntu/Debian: sudo apt install ffmpeg", err=True)
+            click.echo("💡 On macOS: brew install ffmpeg", err=True)
             return
 
         def progress_callback(percentage: float, message: str = ""):

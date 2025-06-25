@@ -26,7 +26,7 @@ Automated video editing system for YouTube Shorts and TikTok, specifically optim
 
 ### 🎬 Video Processing
 - **Smart Cropping**: Automatic 9:16 aspect ratio conversion for vertical platforms
-- **Video Stabilization**: Gyroflow integration for professional stabilization
+- **Video Stabilization**: FFmpeg vidstab integration for professional stabilization
 - **Multiple Platforms**: YouTube Shorts, TikTok, Instagram Reels optimized
 - **Quality Presets**: High-quality encoding with GPU acceleration
 - **Organized Output**: Separate folders for each video processed
@@ -43,24 +43,20 @@ Automated video editing system for YouTube Shorts and TikTok, specifically optim
 
 ### System Requirements
 - **Python 3.9+**
-- **FFmpeg** (for video processing)
+- **FFmpeg** (for video processing and stabilization)
 - **NVIDIA GPU** (recommended for acceleration)
-- **Gyroflow** (optional, for video stabilization)
 
-### Installing Gyroflow (Optional)
-For video stabilization support, install Gyroflow:
+### FFmpeg with Stabilization Support
+Most modern FFmpeg installations include vidstab filters for stabilization:
 
 ```bash
-# Download from official website
-# Visit: https://gyroflow.xyz/
+# Check if vidstab filters are available
+ffmpeg -filters | grep vidstab
 
-# Or install via package manager (if available)
-# Ubuntu/Debian: sudo apt install gyroflow
-# macOS: brew install gyroflow
-# Windows: Download from GitHub releases
-
-# Verify installation
-gyroflow --version
+# If not available, install FFmpeg with libvidstab:
+# Ubuntu/Debian: sudo apt install ffmpeg libvidstab1.1
+# macOS: brew install ffmpeg --with-libvidstab
+# Windows: Download FFmpeg build with vidstab support
 ```
 
 ## 🚀 Quick Start
@@ -142,7 +138,7 @@ python src/cli.py process --input-dir /path/to/videos --output-dir /path/to/outp
 ### Video Stabilization
 
 ```bash
-# Process with gyroflow stabilization
+# Process with FFmpeg stabilization
 python src/cli.py process --stabilize
 
 # Stabilize a single video
@@ -265,10 +261,10 @@ audio:
 # Video Stabilization
 stabilization:
   enabled: false                    # Enable by default
-  gyroflow_path: "gyroflow"        # Path to gyroflow executable
-  smoothness: 0.5                  # Stabilization smoothness (0.0-1.0)
-  lens_correction: true            # Apply lens distortion correction
-  horizon_lock: false              # Lock horizon (useful for FPV)
+  ffmpeg_path: "ffmpeg"            # Path to ffmpeg executable
+  smoothness: 10                   # Stabilization smoothness (1-100)
+  shakiness: 5                     # Shakiness detection sensitivity (1-10)
+  accuracy: 15                     # Motion detection accuracy (1-15)
 ```
 
 ## 🔧 Algorithm Details

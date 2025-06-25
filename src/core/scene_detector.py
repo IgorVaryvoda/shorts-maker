@@ -89,6 +89,18 @@ class FastFPVSceneDetector:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Validate video properties
+        if fps <= 0:
+            cap.release()
+            raise ValueError(f"Invalid FPS value: {fps}. Video file may be corrupted or unsupported.")
+        if total_frames <= 0:
+            cap.release()
+            raise ValueError(f"Invalid frame count: {total_frames}. Video file may be corrupted or unsupported.")
+        if width <= 0 or height <= 0:
+            cap.release()
+            raise ValueError(f"Invalid video dimensions: {width}x{height}. Video file may be corrupted or unsupported.")
+
         duration = total_frames / fps
 
         # Calculate downsampled dimensions for speed
@@ -215,7 +227,7 @@ class FastFPVSceneDetector:
 
             frame_data = {
                 'frame_num': frame_idx,
-                'timestamp': frame_idx / fps,
+                'timestamp': frame_idx / max(fps, 1.0),  # Prevent division by zero
                 'metrics': metrics,
                 'small_gray': small_gray.copy()  # Keep for next iteration
             }

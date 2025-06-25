@@ -287,8 +287,8 @@ class VideoProcessingProgress:
 
     def __init__(self, total_frames: int, fps: float = 30.0):
         self.total_frames = total_frames
-        self.fps = fps
-        self.total_duration = total_frames / fps
+        self.fps = max(fps, 1.0)  # Prevent division by zero
+        self.total_duration = total_frames / self.fps
 
         # Define processing stages
         stages = {
