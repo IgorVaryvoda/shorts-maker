@@ -153,6 +153,13 @@ performance:
   num_threads: 8
   chunk_size: 1000  # frames per chunk
 
+  # Hardware Encoding (NVENC/CUDA)
+  force_hardware_encoding: true    # Force hardware encoding, fail if not available
+  hardware_decoder: true           # Use hardware decoder (CUDA) for input
+  nvenc_preset: "p5"              # NVENC preset: p1 (fastest) to p7 (slowest)
+  nvenc_tuning: "hq"              # NVENC tuning: hq (high quality), ll (low latency)
+  nvenc_multipass: "qres"         # NVENC multipass: disabled, qres, fullres
+
   # Memory management
   streaming_mode: false
   max_memory_usage: "8GB"

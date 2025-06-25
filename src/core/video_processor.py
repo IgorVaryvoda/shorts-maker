@@ -3,34 +3,34 @@ Main video processor for FPV drone footage.
 Orchestrates scene detection, color grading, and video output.
 """
 
-import cv2
-import numpy as np
-import ffmpeg
-from typing import List, Dict, Any, Optional, Tuple
-import logging
-from pathlib import Path
 import datetime
-import json
+import logging
 import os
 import subprocess
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import cv2
+import ffmpeg
+import numpy as np
 
 # Handle imports for both CLI and module usage
 try:
-    from .scene_detector import FPVSceneDetector, SceneSegment
+    from ..utils.config import Config
+    from ..utils.progress import ProgressBar, VideoProcessingProgress
+    from ..utils.stabilizer import VideoStabilizer
     from .color_grader import ColorGrader
     from .music_manager import MusicManager
-    from ..utils.config import Config
-    from ..utils.progress import VideoProcessingProgress, ProgressBar
-    from ..utils.stabilizer import VideoStabilizer
+    from .scene_detector import FPVSceneDetector, SceneSegment
 except ImportError:
     # Fallback for CLI usage
     import sys
+
     sys.path.append(str(Path(__file__).parent.parent))
-    from core.scene_detector import FPVSceneDetector, SceneSegment
     from core.color_grader import ColorGrader
     from core.music_manager import MusicManager
+    from core.scene_detector import FPVSceneDetector, SceneSegment
     from utils.config import Config
-    from utils.progress import VideoProcessingProgress, ProgressBar
     from utils.stabilizer import VideoStabilizer
 
 logger = logging.getLogger(__name__)
@@ -53,17 +53,34 @@ class VideoProcessor:
         self.logger = logging.getLogger(__name__)
 
         # Video settings
-        self.output_resolution = tuple(self.config.get('video.output_resolution', [1080, 1920]))
-        self.fps = self.config.get('video.fps', 30)
-        self.quality = self.config.get('video.quality', 'high')
-        self.codec = self.config.get('video.codec', 'h264')
-        self.bitrate = self.config.get('video.bitrate', '5M')
+        self.output_resolution = tuple(
+            self.config.get("video.output_resolution", [1080, 1920])
+        )
+        self.fps = self.config.get("video.fps", 30)
+        self.quality = self.config.get("video.quality", "high")
+        self.codec = self.config.get("video.codec", "h264")
+        self.bitrate = self.config.get("video.bitrate", "5M")
 
         # Processing settings
-        self.use_gpu = self.config.get('performance.use_gpu', True)
-        self.num_threads = self.config.get('performance.num_threads', 4)
+        self.use_gpu = self.config.get("performance.use_gpu", True)
+        self.num_threads = self.config.get("performance.num_threads", 4)
 
-        self.logger.info(f"Initialized Video Processor - {self.output_resolution[0]}x{self.output_resolution[1]} @ {self.fps}fps")
+        # Hardware encoding settings
+        self.force_hardware_encoding = self.config.get(
+            "performance.force_hardware_encoding", True
+        )
+        self.hardware_decoder = self.config.get("performance.hardware_decoder", True)
+        self.nvenc_preset = self.config.get("performance.nvenc_preset", "p5")
+        self.nvenc_tuning = self.config.get("performance.nvenc_tuning", "hq")
+        self.nvenc_multipass = self.config.get("performance.nvenc_multipass", "qres")
+
+        self.logger.info(
+            f"Initialized Video Processor - {self.output_resolution[0]}x{self.output_resolution[1]} @ {self.fps}fps"
+        )
+        if self.use_gpu and self.force_hardware_encoding:
+            self.logger.info(
+                "Hardware encoding (NVENC) forced - will fail if not available"
+            )
 
     def process_video(
         self,
@@ -71,7 +88,7 @@ class VideoProcessor:
         output_dir: str = "output",
         lut_path: Optional[str] = None,
         max_segments: int = 3,
-        stabilize: bool = False
+        stabilize: bool = False,
     ) -> List[str]:
         """
         Process a video to create shorts.
@@ -105,16 +122,26 @@ class VideoProcessor:
 
         # Validate video properties
         if fps <= 0:
-            raise ValueError(f"Invalid FPS value: {fps}. Video file may be corrupted or unsupported.")
+            raise ValueError(
+                f"Invalid FPS value: {fps}. Video file may be corrupted or unsupported."
+            )
         if total_frames <= 0:
-            raise ValueError(f"Invalid frame count: {total_frames}. Video file may be corrupted or unsupported.")
+            raise ValueError(
+                f"Invalid frame count: {total_frames}. Video file may be corrupted or unsupported."
+            )
         if width <= 0 or height <= 0:
-            raise ValueError(f"Invalid video dimensions: {width}x{height}. Video file may be corrupted or unsupported.")
+            raise ValueError(
+                f"Invalid video dimensions: {width}x{height}. Video file may be corrupted or unsupported."
+            )
 
         duration = total_frames / fps
 
-        print(f"📊 Video Info: {width}x{height}, {duration:.1f}s, {fps:.1f}fps, {total_frames:,} frames")
-        print(f"🎯 Target: {max_segments} shorts, LUT: {os.path.basename(lut_path) if lut_path else 'None'}")
+        print(
+            f"📊 Video Info: {width}x{height}, {duration:.1f}s, {fps:.1f}fps, {total_frames:,} frames"
+        )
+        print(
+            f"🎯 Target: {max_segments} shorts, LUT: {os.path.basename(lut_path) if lut_path else 'None'}"
+        )
         if stabilize:
             print("🔧 Stabilization: Enabled")
         print("=" * 60)
@@ -126,36 +153,43 @@ class VideoProcessor:
                 print("\n🔧 Stage 0: Video Stabilization")
                 print("-" * 40)
 
-                def stabilization_progress_callback(percentage: float, message: str = ""):
+                def stabilization_progress_callback(
+                    percentage: float, message: str = ""
+                ):
                     bar_width = 30
                     filled = int(bar_width * percentage / 100)
                     bar = "█" * filled + "░" * (bar_width - filled)
                     print(f"\r{bar} {percentage:5.1f}% {message}", end="", flush=True)
 
                 stabilized_path = self.stabilizer.stabilize_video(
-                    input_path,
-                    progress_callback=stabilization_progress_callback
+                    input_path, progress_callback=stabilization_progress_callback
                 )
 
                 if stabilized_path:
                     processing_input_path = stabilized_path
                     print(f"\n✅ Video stabilized: {os.path.basename(stabilized_path)}")
                 else:
-                    print(f"\n⚠️  Stabilization failed, proceeding with original video")
+                    print("\n⚠️  Stabilization failed, proceeding with original video")
                     # Try simple stabilization as fallback
                     print("   Trying simple stabilization...")
                     stabilized_path = self.stabilizer.stabilize_video_simple(input_path)
                     if stabilized_path:
                         processing_input_path = stabilized_path
-                        print(f"   ✅ Simple stabilization successful: {os.path.basename(stabilized_path)}")
+                        print(
+                            f"   ✅ Simple stabilization successful: {os.path.basename(stabilized_path)}"
+                        )
                     else:
-                        print(f"   ⚠️  Simple stabilization also failed, using original video")
+                        print(
+                            "   ⚠️  Simple stabilization also failed, using original video"
+                        )
 
             # Stage 1: Scene Detection
             print("\n🎬 Stage 1: Scene Detection")
             print("-" * 40)
 
-            def scene_progress_callback(frame_num: int, total_frames: int, message: str = ""):
+            def scene_progress_callback(
+                frame_num: int, total_frames: int, message: str = ""
+            ):
                 if frame_num % 200 == 0 or frame_num == total_frames:
                     percentage = (frame_num / total_frames) * 100
                     bar_width = 30
@@ -164,8 +198,7 @@ class VideoProcessor:
                     print(f"\r{bar} {percentage:5.1f}% {message}", end="", flush=True)
 
             scenes = self.scene_detector.detect_scenes(
-                processing_input_path,
-                progress_callback=scene_progress_callback
+                processing_input_path, progress_callback=scene_progress_callback
             )
 
             print(f"\n✅ Found {len(scenes)} scenes")
@@ -183,8 +216,10 @@ class VideoProcessor:
 
             # Display selected segments
             for i, segment in enumerate(segments, 1):
-                print(f"  {i}. {segment['start_time']:.1f}s - {segment['end_time']:.1f}s "
-                      f"({segment['duration']:.1f}s, score: {segment['score']:.3f})")
+                print(
+                    f"  {i}. {segment['start_time']:.1f}s - {segment['end_time']:.1f}s "
+                    f"({segment['duration']:.1f}s, score: {segment['score']:.3f})"
+                )
 
             output_paths = []
 
@@ -193,23 +228,23 @@ class VideoProcessor:
             print("-" * 40)
 
             for i, segment in enumerate(segments):
-                print(f"\n📹 Processing Segment {i+1}/{len(segments)}")
-                print(f"   Time: {segment['start_time']:.1f}s - {segment['end_time']:.1f}s ({segment['duration']:.1f}s)")
+                print(f"\n📹 Processing Segment {i + 1}/{len(segments)}")
+                print(
+                    f"   Time: {segment['start_time']:.1f}s - {segment['end_time']:.1f}s ({segment['duration']:.1f}s)"
+                )
 
                 output_path = self._process_segment_with_progress(
-                    processing_input_path,
-                    segment,
-                    output_dir,
-                    i,
-                    lut_path
+                    processing_input_path, segment, output_dir, i, lut_path
                 )
 
                 if output_path:
                     output_paths.append(output_path)
                     file_size = os.path.getsize(output_path) / (1024 * 1024)
-                    print(f"   ✅ Created: {os.path.basename(output_path)} ({file_size:.1f}MB)")
+                    print(
+                        f"   ✅ Created: {os.path.basename(output_path)} ({file_size:.1f}MB)"
+                    )
                 else:
-                    print(f"   ❌ Failed to process segment {i+1}")
+                    print(f"   ❌ Failed to process segment {i + 1}")
 
             # Final Summary
             print("\n" + "=" * 60)
@@ -217,8 +252,12 @@ class VideoProcessor:
             print("=" * 60)
 
             if output_paths:
-                total_size = sum(os.path.getsize(f) for f in output_paths) / (1024 * 1024)
-                print(f"✅ Created {len(output_paths)} shorts ({total_size:.1f}MB total)")
+                total_size = sum(os.path.getsize(f) for f in output_paths) / (
+                    1024 * 1024
+                )
+                print(
+                    f"✅ Created {len(output_paths)} shorts ({total_size:.1f}MB total)"
+                )
                 for i, path in enumerate(output_paths, 1):
                     print(f"  {i}. {os.path.basename(path)}")
             else:
@@ -234,29 +273,31 @@ class VideoProcessor:
             print(f"\n❌ Processing failed: {e}")
             raise
 
-    def _select_best_segments(self, scenes: List[Dict[str, Any]], max_segments: int) -> List[Dict[str, Any]]:
+    def _select_best_segments(
+        self, scenes: List[Dict[str, Any]], max_segments: int
+    ) -> List[Dict[str, Any]]:
         """Select best segments from detected scenes, prioritizing action and avoiding boring content."""
         # Sort scenes by score (highest first)
-        sorted_scenes = sorted(scenes, key=lambda x: x.get('score', 0), reverse=True)
+        sorted_scenes = sorted(scenes, key=lambda x: x.get("score", 0), reverse=True)
 
         # Filter scenes that meet duration requirements (strict for shorts)
-        min_duration = self.config.get('segmentation.min_duration', 5)
-        max_duration = self.config.get('segmentation.max_duration', 15)
+        min_duration = self.config.get("segmentation.min_duration", 5)
+        max_duration = self.config.get("segmentation.max_duration", 15)
 
         valid_scenes = []
         for scene in sorted_scenes:
-            duration = scene['duration']
+            duration = scene["duration"]
             if min_duration <= duration <= max_duration:
                 # Additional filtering for high-quality segments
-                metrics = scene.get('metrics', {})
+                metrics = scene.get("metrics", {})
 
                 # Require minimum motion for FPV footage
-                motion = metrics.get('motion_magnitude', 0.0)
+                motion = metrics.get("motion_magnitude", 0.0)
                 if motion < 0.03:  # Skip very low motion segments
                     continue
 
                 # Require minimum visual interest
-                visual_interest = metrics.get('visual_interest', 0.0)
+                visual_interest = metrics.get("visual_interest", 0.0)
                 if visual_interest < 0.2:  # Skip boring visual content
                     continue
 
@@ -280,7 +321,9 @@ class VideoProcessor:
 
         # If we don't have enough segments, relax the criteria
         if len(selected) < max_segments and len(valid_scenes) > len(selected):
-            self.logger.warning(f"Only found {len(selected)} high-quality segments, adding more with relaxed criteria")
+            self.logger.warning(
+                f"Only found {len(selected)} high-quality segments, adding more with relaxed criteria"
+            )
 
             for scene in valid_scenes:
                 if len(selected) >= max_segments:
@@ -290,31 +333,40 @@ class VideoProcessor:
                     # Check for minimal overlap
                     overlap = False
                     for selected_scene in selected:
-                        if self._scenes_overlap(scene, selected_scene, threshold=0.1):  # Stricter overlap
+                        if self._scenes_overlap(
+                            scene, selected_scene, threshold=0.1
+                        ):  # Stricter overlap
                             overlap = True
                             break
 
                     if not overlap:
                         selected.append(scene)
 
-        self.logger.info(f"Selected {len(selected)} high-action segments from {len(scenes)} detected scenes")
+        self.logger.info(
+            f"Selected {len(selected)} high-action segments from {len(scenes)} detected scenes"
+        )
 
         return selected
 
-    def _scenes_overlap(self, scene1: Dict[str, Any], scene2: Dict[str, Any], threshold: Optional[float] = None) -> bool:
+    def _scenes_overlap(
+        self,
+        scene1: Dict[str, Any],
+        scene2: Dict[str, Any],
+        threshold: Optional[float] = None,
+    ) -> bool:
         """Check if two scenes overlap significantly."""
         if threshold is None:
-            threshold = self.config.get('segmentation.overlap_threshold', 0.3)
+            threshold = self.config.get("segmentation.overlap_threshold", 0.3)
 
         # Calculate overlap
-        start = max(scene1['start_time'], scene2['start_time'])
-        end = min(scene1['end_time'], scene2['end_time'])
+        start = max(scene1["start_time"], scene2["start_time"])
+        end = min(scene1["end_time"], scene2["end_time"])
 
         if start >= end:
             return False  # No overlap
 
         overlap_duration = end - start
-        min_duration = min(scene1['duration'], scene2['duration'])
+        min_duration = min(scene1["duration"], scene2["duration"])
 
         return (overlap_duration / min_duration) > threshold
 
@@ -324,14 +376,14 @@ class VideoProcessor:
         segment: Dict[str, Any],
         output_dir: str,
         segment_index: int,
-        lut_path: Optional[str]
+        lut_path: Optional[str],
     ) -> Optional[str]:
         """Process a single segment with fast FFmpeg-based processing."""
         try:
             # Calculate segment info
-            start_time = segment['start_time']
-            end_time = segment['end_time']
-            duration = segment['duration']
+            start_time = segment["start_time"]
+            end_time = segment["end_time"]
+            duration = segment["duration"]
 
             # Generate output filename
             timestamp = int(start_time)
@@ -362,129 +414,161 @@ class VideoProcessor:
                 crop_x = 0
                 crop_y = (height - crop_height) // 2
 
-            print(f"   📐 Crop: {crop_width}x{crop_height} → {target_width}x{target_height}")
+            print(
+                f"   📐 Crop: {crop_width}x{crop_height} → {target_width}x{target_height}"
+            )
 
             # Get quality parameters from config
             quality_params = self._get_ffmpeg_quality_params()
             print(f"   ⚡ Using FFmpeg with {self.quality} quality settings...")
-            print(f"   🎯 Quality: CRF {quality_params.get('crf', 23)}, preset {quality_params.get('preset', 'medium')}")
-            if quality_params.get('b:v'):
+            print(
+                f"   🎯 Quality: CRF {quality_params.get('crf', 23)}, preset {quality_params.get('preset', 'medium')}"
+            )
+            if quality_params.get("b:v"):
                 print(f"   📊 Bitrate: {quality_params['b:v']}")
 
-            # Build video filter chain
+            # Build video filter chain (always use CPU filters for compatibility)
             vf_filters = []
-            vf_filters.append(f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y}')
-            vf_filters.append(f'scale={target_width}:{target_height}')
+            vf_filters.append(f"crop={crop_width}:{crop_height}:{crop_x}:{crop_y}")
+            vf_filters.append(f"scale={target_width}:{target_height}")
 
             # Add LUT filter if provided
             if lut_path and os.path.exists(lut_path):
                 print(f"   🎨 Applying LUT: {os.path.basename(lut_path)}")
-                vf_filters.append(f'lut3d={lut_path}')
+                vf_filters.append(f"lut3d={lut_path}")
 
-            vf_chain = ','.join(vf_filters)
+            vf_chain = ",".join(vf_filters)
 
-            # Try hardware encoding first if GPU is enabled
+            # Force hardware encoding if GPU is enabled
             use_hardware = False
-            encoder = 'libx264'
-            encoding_params = []
+            encoder = "libx264"
+            encoder_params = []
 
             if self.use_gpu:
                 try:
                     # Check if NVENC is available
-                    result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, timeout=5)
-                    if 'h264_nvenc' in result.stdout:
-                        encoder = 'h264_nvenc'
+                    result = subprocess.run(
+                        ["ffmpeg", "-encoders"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if "hevc_nvenc" in result.stdout:
                         use_hardware = True
-                        # NVENC quality parameters (different scale than x264)
-                        nvenc_crf = min(int(quality_params.get('crf', 23)) + 8, 35)  # NVENC CRF scale is different
-                        encoding_params = [
-                            '-rc', 'vbr',
-                            '-cq', str(nvenc_crf),
-                            '-preset', 'p4',  # NVENC preset (p1=fastest, p7=slowest)
-                            '-profile:v', 'high',
-                            '-level:v', '4.1',
-                            '-b:v', quality_params.get('b:v', '10M'),
-                            '-maxrate', quality_params.get('b:v', '10M'),
-                            '-bufsize', '20M'
+                        encoder = "hevc_nvenc"
+
+                        # Use config-based NVENC parameters
+                        quality_map = {
+                            "low": {"cq": 35},  # Fastest
+                            "medium": {"cq": 28},  # Fast
+                            "high": {"cq": 23},  # Balanced
+                            "ultra": {"cq": 18},  # High quality
+                        }
+
+                        nvenc_params = quality_map.get(
+                            self.quality, quality_map["high"]
+                        )
+
+                        encoder_params = [
+                            "-rc",
+                            "vbr",
+                            "-cq",
+                            str(nvenc_params["cq"]),
+                            "-preset",
+                            self.nvenc_preset,
+                            "-tune",
+                            self.nvenc_tuning,
+                            "-multipass",
+                            self.nvenc_multipass,
+                            "-profile:v",
+                            "main10",  # Use main10 profile for 10-bit
+                            "-level:v",
+                            "5.1",  # Higher level for 4K
+                            "-b:v",
+                            quality_params.get(
+                                "b:v", "25M"
+                            ),  # Higher bitrate for 4K HEVC
+                            "-maxrate",
+                            quality_params.get("b:v", "25M"),
+                            "-bufsize",
+                            "50M",
+                            "-spatial_aq",
+                            "1",
+                            "-temporal_aq",
+                            "1",
+                            "-rc-lookahead",
+                            "20",
                         ]
-                        print(f"   🚀 Using NVIDIA hardware encoding (CQ {nvenc_crf})")
+                        print(
+                            f"   🚀 HEVC NVENC: CQ {nvenc_params['cq']}, preset {self.nvenc_preset} (10-bit)"
+                        )
                     else:
-                        print(f"   ℹ️  NVENC not available, using software encoding")
+                        if self.force_hardware_encoding:
+                            raise Exception(
+                                "HEVC NVENC not available but hardware encoding is forced"
+                            )
+                        print("   ⚠️  HEVC NVENC not available, using software encoding")
                 except Exception as e:
+                    if self.force_hardware_encoding:
+                        raise Exception(f"Hardware encoding forced but failed: {e}")
                     print(f"   ⚠️  Hardware encoder check failed: {e}")
 
-            # Software encoding parameters
+            # Software encoding parameters (fallback)
             if not use_hardware:
-                encoding_params = [
-                    '-crf', str(quality_params.get('crf', 23)),
-                    '-preset', quality_params.get('preset', 'medium')
+                if self.force_hardware_encoding:
+                    raise Exception(
+                        "Hardware encoding forced but NVENC is not available"
+                    )
+                encoder_params = [
+                    "-crf",
+                    str(quality_params.get("crf", 23)),
+                    "-preset",
+                    quality_params.get("preset", "medium"),
                 ]
-                if quality_params.get('b:v'):
-                    encoding_params.extend(['-b:v', quality_params['b:v']])
-                print(f"   🖥️  Using software encoding (x264)")
+                if quality_params.get("b:v"):
+                    encoder_params.extend(["-b:v", quality_params["b:v"]])
+                print("   🖥️  Using software encoding (x264)")
 
             # Build complete FFmpeg command
             cmd = [
-                'ffmpeg',
-                '-i', input_path,
-                '-ss', str(start_time),
-                '-t', str(duration),
-                '-vf', vf_chain,
-                '-c:v', encoder,
-                *encoding_params,
-                '-r', str(self.fps),
-                '-pix_fmt', 'yuv420p',
-                '-movflags', '+faststart',  # Better for streaming
-                '-y',  # Overwrite output
-                output_path
+                "ffmpeg",
+                "-i",
+                input_path,
+                "-ss",
+                str(start_time),
+                "-t",
+                str(duration),
+                "-vf",
+                vf_chain,
+                "-c:v",
+                encoder,
+                *encoder_params,
+                "-r",
+                str(self.fps),
+                "-movflags",
+                "+faststart",
+                "-avoid_negative_ts",
+                "make_zero",  # Fix timing issues
+                "-y",  # Overwrite output
+                output_path,
             ]
 
             # Run FFmpeg
-            print(f"   🎞️  Processing with FFmpeg...")
+            print("   🎞️  Processing with FFmpeg...")
+
+            # Debug: Print command for troubleshooting
+            if self.config.get("logging.level") == "DEBUG":
+                print(f"   🔧 Command: {' '.join(cmd)}")
 
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=300
+                )
                 if result.returncode != 0:
-                    if use_hardware:
-                        print(f"   ⚠️  Hardware encoding failed, trying software encoding...")
-                        # Rebuild command with software encoding
-                        software_params = [
-                            '-crf', str(quality_params.get('crf', 23)),
-                            '-preset', quality_params.get('preset', 'medium')
-                        ]
-                        if quality_params.get('b:v'):
-                            software_params.extend(['-b:v', quality_params['b:v']])
-
-                        cmd_software = [
-                            'ffmpeg',
-                            '-i', input_path,
-                            '-ss', str(start_time),
-                            '-t', str(duration),
-                            '-vf', vf_chain,
-                            '-c:v', 'libx264',
-                            *software_params,
-                            '-r', str(self.fps),
-                            '-pix_fmt', 'yuv420p',
-                            '-movflags', '+faststart',
-                            '-y',
-                            output_path
-                        ]
-
-                        result = subprocess.run(cmd_software, capture_output=True, text=True, timeout=300)
-
-                        if result.returncode == 0:
-                            print(f"   ✅ Software encoding successful")
-                        else:
-                            print(f"   ❌ Software encoding also failed: {result.stderr}")
-                            raise Exception(f"Both hardware and software encoding failed: {result.stderr}")
-                    else:
-                        print(f"   ❌ Software encoding failed: {result.stderr}")
-                        raise Exception(f"FFmpeg failed: {result.stderr}")
+                    print(f"   ❌ Software encoding failed: {result.stderr}")
+                    raise Exception(f"FFmpeg failed: {result.stderr}")
                 else:
-                    if use_hardware:
-                        print(f"   ✅ Hardware encoding successful")
-                    else:
-                        print(f"   ✅ Software encoding successful")
+                    print("   ✅ Software encoding successful")
 
             except subprocess.TimeoutExpired:
                 raise Exception("FFmpeg processing timed out")
@@ -495,21 +579,23 @@ class VideoProcessor:
 
             # Add music if enabled
             if self.music_manager.enable_music:
-                print(f"   🎵 Adding background music...")
+                print("   🎵 Adding background music...")
 
                 # Select music for this segment
-                music_path = self.music_manager.select_music_for_video(input_path, duration)
+                music_path = self.music_manager.select_music_for_video(
+                    input_path, duration
+                )
 
                 if music_path:
                     # Create temporary path for video with music
-                    temp_output = output_path.replace('.mp4', '_with_music.mp4')
+                    temp_output = output_path.replace(".mp4", "_with_music.mp4")
 
                     # Add music to video
                     final_output = self.music_manager.add_music_to_video(
                         video_path=output_path,
                         output_path=temp_output,
                         music_path=music_path,
-                        segment_duration=duration
+                        segment_duration=duration,
                     )
 
                     # Replace original with music version
@@ -517,9 +603,11 @@ class VideoProcessor:
                         os.replace(temp_output, output_path)
                         print(f"   ✅ Music added: {os.path.basename(music_path)}")
                     else:
-                        print(f"   ⚠️  Music addition failed, keeping video-only version")
+                        print("   ⚠️  Music addition failed, keeping video-only version")
                 else:
-                    print(f"   ℹ️  No music available - add music files to music/ directory")
+                    print(
+                        "   ℹ️  No music available - add music files to music/ directory"
+                    )
 
             return output_path
 
@@ -548,10 +636,14 @@ class VideoProcessor:
 
         # Create simple progress bar for analysis
         print(f"🔍 Analyzing video: {os.path.basename(input_path)}")
-        print(f"📊 Total frames: {total_frames:,} ({total_frames/fps:.1f}s @ {fps:.1f}fps)")
+        print(
+            f"📊 Total frames: {total_frames:,} ({total_frames / fps:.1f}s @ {fps:.1f}fps)"
+        )
         print("=" * 60)
 
-        def analysis_progress_callback(frame_num: int, total_frames: int, message: str = ""):
+        def analysis_progress_callback(
+            frame_num: int, total_frames: int, message: str = ""
+        ):
             # Show progress every 100 frames to avoid spam
             if frame_num % 100 == 0 or frame_num == total_frames:
                 percentage = (frame_num / total_frames) * 100
@@ -563,8 +655,7 @@ class VideoProcessor:
 
         # Detect scenes with progress
         scenes = self.scene_detector.detect_scenes(
-            input_path,
-            progress_callback=analysis_progress_callback
+            input_path, progress_callback=analysis_progress_callback
         )
 
         # Complete progress bar
@@ -574,50 +665,51 @@ class VideoProcessor:
         # Compile analysis results
         cap = cv2.VideoCapture(input_path)
         video_info = {
-            'file_path': input_path,
-            'file_size_mb': os.path.getsize(input_path) / (1024 * 1024),
-            'duration': cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS),
-            'fps': cap.get(cv2.CAP_PROP_FPS),
-            'resolution': (
+            "file_path": input_path,
+            "file_size_mb": os.path.getsize(input_path) / (1024 * 1024),
+            "duration": cap.get(cv2.CAP_PROP_FRAME_COUNT) / cap.get(cv2.CAP_PROP_FPS),
+            "fps": cap.get(cv2.CAP_PROP_FPS),
+            "resolution": (
                 int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
             ),
-            'frame_count': int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            "frame_count": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
         }
         cap.release()
 
         # Filter scenes by duration
-        min_duration = self.config.get('segmentation.min_duration', 15)
-        max_duration = self.config.get('segmentation.max_duration', 60)
+        min_duration = self.config.get("segmentation.min_duration", 15)
+        max_duration = self.config.get("segmentation.max_duration", 60)
 
         valid_scenes = [
-            scene for scene in scenes
-            if min_duration <= scene['duration'] <= max_duration
+            scene
+            for scene in scenes
+            if min_duration <= scene["duration"] <= max_duration
         ]
 
         # Sort by score
-        valid_scenes.sort(key=lambda x: x.get('score', 0), reverse=True)
+        valid_scenes.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         analysis = {
-            'video_info': video_info,
-            'total_scenes': len(scenes),
-            'valid_scenes': len(valid_scenes),
-            'best_scenes': valid_scenes[:5],  # Top 5 scenes
-            'scene_details': scenes
+            "video_info": video_info,
+            "total_scenes": len(scenes),
+            "valid_scenes": len(valid_scenes),
+            "best_scenes": valid_scenes[:5],  # Top 5 scenes
+            "scene_details": scenes,
         }
 
         return analysis
 
-    def _select_scenes_for_shorts(self, scenes: List[SceneSegment],
-                                target_duration: int, num_shorts: int) -> List[SceneSegment]:
+    def _select_scenes_for_shorts(
+        self, scenes: List[SceneSegment], target_duration: int, num_shorts: int
+    ) -> List[SceneSegment]:
         """Select best scenes for creating shorts."""
         # Filter scenes by duration (allow some flexibility)
         min_duration = max(15, target_duration - 10)
         max_duration = min(60, target_duration + 15)
 
         suitable_scenes = [
-            s for s in scenes
-            if min_duration <= s.duration <= max_duration
+            s for s in scenes if min_duration <= s.duration <= max_duration
         ]
 
         if not suitable_scenes:
@@ -645,9 +737,16 @@ class VideoProcessor:
 
         return selected
 
-    def _process_scene(self, input_path: str, scene: SceneSegment,
-                      output_path: Path, lut_path: Optional[str],
-                      target_duration: int, platform: str, index: int) -> Optional[str]:
+    def _process_scene(
+        self,
+        input_path: str,
+        scene: SceneSegment,
+        output_path: Path,
+        lut_path: Optional[str],
+        target_duration: int,
+        platform: str,
+        index: int,
+    ) -> Optional[str]:
         """Process a single scene into a short video."""
         try:
             # Calculate timing
@@ -670,17 +769,18 @@ class VideoProcessor:
             temp_file = output_path / f"temp_{index}_{timestamp}.mp4"
 
             # Step 1: Extract segment with FFmpeg
-            self.logger.info(f"Extracting segment: {start_time:.1f}s - {start_time + duration:.1f}s")
+            self.logger.info(
+                f"Extracting segment: {start_time:.1f}s - {start_time + duration:.1f}s"
+            )
 
             (
-                ffmpeg
-                .input(input_path, ss=start_time, t=duration)
+                ffmpeg.input(input_path, ss=start_time, t=duration)
                 .output(
                     str(temp_file),
-                    vcodec='libx264',
-                    acodec='aac' if self._has_audio(input_path) else None,
+                    vcodec="libx264",
+                    acodec="aac" if self._has_audio(input_path) else None,
                     r=self.fps,
-                    **self._get_ffmpeg_quality_params()
+                    **self._get_ffmpeg_quality_params(),
                 )
                 .overwrite_output()
                 .run(quiet=True)
@@ -702,8 +802,9 @@ class VideoProcessor:
             self.logger.error(f"Failed to process scene {index}: {e}")
             return None
 
-    def _apply_color_grading_and_crop(self, input_file: str, output_file: str,
-                                    lut_path: Optional[str], platform: str) -> None:
+    def _apply_color_grading_and_crop(
+        self, input_file: str, output_file: str, lut_path: Optional[str], platform: str
+    ) -> None:
         """Apply color grading and crop video to vertical format."""
         cap = cv2.VideoCapture(input_file)
         if not cap.isOpened():
@@ -717,11 +818,13 @@ class VideoProcessor:
 
         # Calculate crop parameters for 9:16 aspect ratio
         target_width, target_height = self.output_resolution
-        crop_params = self._calculate_crop_params(width, height, target_width, target_height)
+        crop_params = self._calculate_crop_params(
+            width, height, target_width, target_height
+        )
 
         # Setup video writer
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        temp_output = output_file.replace('.mp4', '_temp.mp4')
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        temp_output = output_file.replace(".mp4", "_temp.mp4")
         out = cv2.VideoWriter(temp_output, fourcc, fps, (target_width, target_height))
 
         frame_count = 0
@@ -751,7 +854,9 @@ class VideoProcessor:
             # Progress logging
             if frame_count % 100 == 0:
                 progress = (frame_count / total_frames) * 100
-                self.logger.debug(f"Progress: {progress:.1f}% ({frame_count}/{total_frames})")
+                self.logger.debug(
+                    f"Progress: {progress:.1f}% ({frame_count}/{total_frames})"
+                )
 
         cap.release()
         out.release()
@@ -768,15 +873,19 @@ class VideoProcessor:
         if has_audio:
             audio_stream = ffmpeg.input(input_file).audio
             output_stream = ffmpeg.output(
-                output_stream, audio_stream, output_file,
-                vcodec='libx264', acodec='aac',
-                **self._get_ffmpeg_quality_params()
+                output_stream,
+                audio_stream,
+                output_file,
+                vcodec="libx264",
+                acodec="aac",
+                **self._get_ffmpeg_quality_params(),
             )
         else:
             output_stream = ffmpeg.output(
-                output_stream, output_file,
-                vcodec='libx264',
-                **self._get_ffmpeg_quality_params()
+                output_stream,
+                output_file,
+                vcodec="libx264",
+                **self._get_ffmpeg_quality_params(),
             )
 
         ffmpeg.run(output_stream, overwrite_output=True, quiet=True)
@@ -784,8 +893,9 @@ class VideoProcessor:
         # Clean up temp file
         Path(temp_output).unlink()
 
-    def _calculate_crop_params(self, width: int, height: int,
-                             target_width: int, target_height: int) -> Dict[str, int]:
+    def _calculate_crop_params(
+        self, width: int, height: int, target_width: int, target_height: int
+    ) -> Dict[str, int]:
         """Calculate crop parameters for vertical format."""
         # Target aspect ratio (9:16)
         target_aspect = target_width / target_height
@@ -804,27 +914,24 @@ class VideoProcessor:
             x_offset = 0
             y_offset = (height - new_height) // 2
 
-        return {
-            'x': x_offset,
-            'y': y_offset,
-            'width': new_width,
-            'height': new_height
-        }
+        return {"x": x_offset, "y": y_offset, "width": new_width, "height": new_height}
 
     def _crop_frame(self, frame: np.ndarray, crop_params: Dict[str, int]) -> np.ndarray:
         """Crop frame according to parameters."""
-        x = crop_params['x']
-        y = crop_params['y']
-        w = crop_params['width']
-        h = crop_params['height']
+        x = crop_params["x"]
+        y = crop_params["y"]
+        w = crop_params["width"]
+        h = crop_params["height"]
 
-        return frame[y:y+h, x:x+w]
+        return frame[y : y + h, x : x + w]
 
     def _has_audio(self, video_path: str) -> bool:
         """Check if video has audio track."""
         try:
             probe = ffmpeg.probe(video_path)
-            audio_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'audio']
+            audio_streams = [
+                stream for stream in probe["streams"] if stream["codec_type"] == "audio"
+            ]
             return len(audio_streams) > 0
         except:
             return False
@@ -832,45 +939,51 @@ class VideoProcessor:
     def _get_ffmpeg_quality_params(self) -> Dict[str, Any]:
         """Get FFmpeg quality parameters based on settings."""
         quality_presets = {
-            'low': {'crf': 28, 'preset': 'fast'},
-            'medium': {'crf': 23, 'preset': 'medium'},
-            'high': {'crf': 18, 'preset': 'slow'},
-            'ultra': {'crf': 15, 'preset': 'slower'}
+            "low": {"crf": 28, "preset": "fast"},
+            "medium": {"crf": 23, "preset": "medium"},
+            "high": {"crf": 18, "preset": "slow"},
+            "ultra": {"crf": 15, "preset": "slower"},
         }
 
-        params = quality_presets.get(self.quality, quality_presets['high'])
+        params = quality_presets.get(self.quality, quality_presets["high"])
 
         # Add bitrate if specified
         if self.bitrate:
-            params['b:v'] = self.bitrate
+            params["b:v"] = self.bitrate
 
         return params
 
-    def _generate_recommendations(self, scenes: List[SceneSegment],
-                                color_analysis: Dict[str, float]) -> Dict[str, Any]:
+    def _generate_recommendations(
+        self, scenes: List[SceneSegment], color_analysis: Dict[str, float]
+    ) -> Dict[str, Any]:
         """Generate processing recommendations."""
         recommendations = {
-            'scene_selection': {
-                'total_scenes': len(scenes),
-                'recommended_scenes': min(len(scenes), 5),
-                'best_duration_range': [20, 45] if scenes else [30, 30]
+            "scene_selection": {
+                "total_scenes": len(scenes),
+                "recommended_scenes": min(len(scenes), 5),
+                "best_duration_range": [20, 45] if scenes else [30, 30],
             },
-            'color_grading': {
-                'needs_exposure_correction': abs(color_analysis.get('exposure_bias', 0)) > 0.2,
-                'needs_contrast_boost': color_analysis.get('contrast', 0.5) < 0.3,
-                'needs_saturation_boost': color_analysis.get('saturation', 0.5) < 0.4,
-                'recommended_lut_intensity': 0.8 if color_analysis.get('dynamic_range', 0.5) > 0.6 else 0.6
+            "color_grading": {
+                "needs_exposure_correction": abs(color_analysis.get("exposure_bias", 0))
+                > 0.2,
+                "needs_contrast_boost": color_analysis.get("contrast", 0.5) < 0.3,
+                "needs_saturation_boost": color_analysis.get("saturation", 0.5) < 0.4,
+                "recommended_lut_intensity": 0.8
+                if color_analysis.get("dynamic_range", 0.5) > 0.6
+                else 0.6,
             },
-            'processing': {
-                'estimated_time_per_short': '2-5 minutes',
-                'recommended_gpu_usage': self.use_gpu,
-                'optimal_batch_size': min(3, len(scenes))
-            }
+            "processing": {
+                "estimated_time_per_short": "2-5 minutes",
+                "recommended_gpu_usage": self.use_gpu,
+                "optimal_batch_size": min(3, len(scenes)),
+            },
         }
 
         return recommendations
 
 
-def create_video_processor(config_path_or_config: Optional[str] = None) -> VideoProcessor:
+def create_video_processor(
+    config_path_or_config: Optional[str] = None,
+) -> VideoProcessor:
     """Create a video processor instance."""
     return VideoProcessor(config_path_or_config)
