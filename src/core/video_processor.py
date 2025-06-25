@@ -364,40 +364,80 @@ class VideoProcessor:
 
             print(f"   📐 Crop: {crop_width}x{crop_height} → {target_width}x{target_height}")
 
-            # Use direct FFmpeg command for reliability and speed
-            print(f"   ⚡ Using FFmpeg for fast processing...")
+            # Get quality parameters from config
+            quality_params = self._get_ffmpeg_quality_params()
+            print(f"   ⚡ Using FFmpeg with {self.quality} quality settings...")
+            print(f"   🎯 Quality: CRF {quality_params.get('crf', 23)}, preset {quality_params.get('preset', 'medium')}")
+            if quality_params.get('b:v'):
+                print(f"   📊 Bitrate: {quality_params['b:v']}")
 
-            # Build FFmpeg command
-            cmd = [
-                'ffmpeg', '-i', input_path,
-                '-ss', str(start_time),
-                '-t', str(duration),
-                '-vf', f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height}',
-                '-c:v', 'libx264',
-                '-preset', 'fast',
-                '-crf', '23',
-                '-r', '30',
-                '-pix_fmt', 'yuv420p',
-                '-y',  # Overwrite output
-                output_path
-            ]
+            # Build video filter chain
+            vf_filters = []
+            vf_filters.append(f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y}')
+            vf_filters.append(f'scale={target_width}:{target_height}')
 
             # Add LUT filter if provided
             if lut_path and os.path.exists(lut_path):
                 print(f"   🎨 Applying LUT: {os.path.basename(lut_path)}")
-                # Insert LUT filter into the video filter chain
-                vf_chain = f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height},lut3d={lut_path}'
-                cmd[cmd.index('-vf') + 1] = vf_chain
+                vf_filters.append(f'lut3d={lut_path}')
 
-            # Try hardware encoding first
-            try:
-                # Check if NVENC is available
-                result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, timeout=5)
-                if 'h264_nvenc' in result.stdout:
-                    cmd[cmd.index('libx264')] = 'h264_nvenc'
-                    print(f"   🚀 Using NVIDIA hardware encoding")
-            except:
-                pass
+            vf_chain = ','.join(vf_filters)
+
+            # Try hardware encoding first if GPU is enabled
+            use_hardware = False
+            encoder = 'libx264'
+            encoding_params = []
+
+            if self.use_gpu:
+                try:
+                    # Check if NVENC is available
+                    result = subprocess.run(['ffmpeg', '-encoders'], capture_output=True, text=True, timeout=5)
+                    if 'h264_nvenc' in result.stdout:
+                        encoder = 'h264_nvenc'
+                        use_hardware = True
+                        # NVENC quality parameters (different scale than x264)
+                        nvenc_crf = min(int(quality_params.get('crf', 23)) + 8, 35)  # NVENC CRF scale is different
+                        encoding_params = [
+                            '-rc', 'vbr',
+                            '-cq', str(nvenc_crf),
+                            '-preset', 'p4',  # NVENC preset (p1=fastest, p7=slowest)
+                            '-profile:v', 'high',
+                            '-level:v', '4.1',
+                            '-b:v', quality_params.get('b:v', '10M'),
+                            '-maxrate', quality_params.get('b:v', '10M'),
+                            '-bufsize', '20M'
+                        ]
+                        print(f"   🚀 Using NVIDIA hardware encoding (CQ {nvenc_crf})")
+                    else:
+                        print(f"   ℹ️  NVENC not available, using software encoding")
+                except Exception as e:
+                    print(f"   ⚠️  Hardware encoder check failed: {e}")
+
+            # Software encoding parameters
+            if not use_hardware:
+                encoding_params = [
+                    '-crf', str(quality_params.get('crf', 23)),
+                    '-preset', quality_params.get('preset', 'medium')
+                ]
+                if quality_params.get('b:v'):
+                    encoding_params.extend(['-b:v', quality_params['b:v']])
+                print(f"   🖥️  Using software encoding (x264)")
+
+            # Build complete FFmpeg command
+            cmd = [
+                'ffmpeg',
+                '-i', input_path,
+                '-ss', str(start_time),
+                '-t', str(duration),
+                '-vf', vf_chain,
+                '-c:v', encoder,
+                *encoding_params,
+                '-r', str(self.fps),
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',  # Better for streaming
+                '-y',  # Overwrite output
+                output_path
+            ]
 
             # Run FFmpeg
             print(f"   🎞️  Processing with FFmpeg...")
@@ -405,14 +445,46 @@ class VideoProcessor:
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode != 0:
-                    # If hardware encoding failed, try software
-                    if 'h264_nvenc' in cmd:
+                    if use_hardware:
                         print(f"   ⚠️  Hardware encoding failed, trying software encoding...")
-                        cmd[cmd.index('h264_nvenc')] = 'libx264'
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                        # Rebuild command with software encoding
+                        software_params = [
+                            '-crf', str(quality_params.get('crf', 23)),
+                            '-preset', quality_params.get('preset', 'medium')
+                        ]
+                        if quality_params.get('b:v'):
+                            software_params.extend(['-b:v', quality_params['b:v']])
 
-                    if result.returncode != 0:
+                        cmd_software = [
+                            'ffmpeg',
+                            '-i', input_path,
+                            '-ss', str(start_time),
+                            '-t', str(duration),
+                            '-vf', vf_chain,
+                            '-c:v', 'libx264',
+                            *software_params,
+                            '-r', str(self.fps),
+                            '-pix_fmt', 'yuv420p',
+                            '-movflags', '+faststart',
+                            '-y',
+                            output_path
+                        ]
+
+                        result = subprocess.run(cmd_software, capture_output=True, text=True, timeout=300)
+
+                        if result.returncode == 0:
+                            print(f"   ✅ Software encoding successful")
+                        else:
+                            print(f"   ❌ Software encoding also failed: {result.stderr}")
+                            raise Exception(f"Both hardware and software encoding failed: {result.stderr}")
+                    else:
+                        print(f"   ❌ Software encoding failed: {result.stderr}")
                         raise Exception(f"FFmpeg failed: {result.stderr}")
+                else:
+                    if use_hardware:
+                        print(f"   ✅ Hardware encoding successful")
+                    else:
+                        print(f"   ✅ Software encoding successful")
 
             except subprocess.TimeoutExpired:
                 raise Exception("FFmpeg processing timed out")

@@ -52,7 +52,7 @@ segmentation:
 color_grading:
   # Default settings
   default_lut: "luts/avata2.cube"
-  lut_intensity: 0.8  # 0.0 to 1.0
+  lut_intensity: 1.0  # 0.0 to 1.0
 
   # Automatic adjustments
   auto_exposure: true
@@ -80,9 +80,21 @@ audio:
   fade_in_duration: 0.0         # Seconds - disabled to fix volume issue
   fade_out_duration: 0.0        # Seconds - disabled to fix volume issue
 
-  # Music Selection
-  random_selection: true        # Random track per video
-  preferred_genres: ["electronic", "cinematic", "upbeat"]
+  # Music Selection (Enhanced AI-Powered System)
+  random_selection: false       # Use intelligent selection instead of random
+  preferred_genres: ["electronic", "cinematic", "upbeat", "rock"]  # Preferred genres for FPV
+
+  # Intelligent Selection Settings
+  intelligent_selection: true   # Enable AI-powered music selection
+  variety_factor: 0.8          # 0.0-1.0, higher = more variety, lower = more consistent
+  energy_preference: 0.7       # 0.0-1.0, preference for high-energy tracks
+  tempo_preference: "upbeat"   # "slow", "medium", "upbeat", "fast"
+  avoid_recent_limit: 10       # Avoid tracks used in last N videos
+
+  # Library Analysis
+  auto_analyze_library: true   # Automatically analyze new music files
+  analysis_quality: "standard" # "fast", "standard", "comprehensive"
+  cache_analysis: true         # Cache analysis results for faster processing
 
   # Audio Processing
   normalize_audio: false
@@ -138,7 +150,7 @@ performance:
   # Processing
   use_gpu: true
   gpu_device: 0
-  num_threads: 4
+  num_threads: 8
   chunk_size: 1000  # frames per chunk
 
   # Memory management
