@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import click
+import cv2
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -1331,19 +1332,18 @@ def _apply_lut_single_video(input_video, output_video, lut_path, quality, config
                 result = subprocess.run(
                     ["ffmpeg", "-encoders"], capture_output=True, text=True, timeout=5
                 )
-                if "hevc_nvenc" in result.stdout:
+                if "h264_nvenc" in result.stdout:
                     use_hardware = True
-                    encoder = "hevc_nvenc"
+                    encoder = "h264_nvenc"
 
-                    # Don't use hardware decoder - causes issues with 10-bit HEVC + filters
-                    # Just use hardware encoder for speed boost
+                    # Use hardware encoder for speed and phone compatibility
                     input_params = []
 
                     # Map software quality to NVENC quality
                     quality_map = {
-                        "low": {"cq": 35, "preset": "p1"},  # Fastest
-                        "medium": {"cq": 28, "preset": "p3"},  # Fast
-                        "high": {"cq": 23, "preset": "p5"},  # Balanced
+                        "low": {"cq": 32, "preset": "p1"},  # Fastest
+                        "medium": {"cq": 26, "preset": "p3"},  # Fast
+                        "high": {"cq": 21, "preset": "p5"},  # Balanced
                         "ultra": {"cq": 18, "preset": "p6"},  # High quality
                     }
 
@@ -1368,9 +1368,9 @@ def _apply_lut_single_video(input_video, output_video, lut_path, quality, config
                         "-preset",
                         nvenc_params["preset"],
                         "-profile:v",
-                        "main10",  # Use main10 profile for 10-bit
+                        "high",  # Use high profile for H264 compatibility
                         "-level:v",
-                        "5.1",  # Higher level for 4K
+                        "4.1",  # Good level for most devices
                         "-spatial_aq",
                         "1",
                         "-temporal_aq",
@@ -1383,19 +1383,19 @@ def _apply_lut_single_video(input_video, output_video, lut_path, quality, config
                     if quality_params.get("b:v"):
                         encoder_params.extend(["-b:v", quality_params["b:v"]])
                         encoder_params.extend(["-maxrate", quality_params["b:v"]])
-                        encoder_params.extend(["-bufsize", "30M"])
+                        encoder_params.extend(["-bufsize", "25M"])
                     else:
                         encoder_params.extend(
-                            ["-b:v", "25M"]
-                        )  # Higher bitrate for 4K HEVC
-                        encoder_params.extend(["-maxrate", "25M"])
-                        encoder_params.extend(["-bufsize", "50M"])
+                            ["-b:v", "20M"]
+                        )  # Good bitrate for H264
+                        encoder_params.extend(["-maxrate", "20M"])
+                        encoder_params.extend(["-bufsize", "40M"])
 
                     click.echo(
-                        f"🚀 HEVC NVENC encoding: CQ {nvenc_params['cq']}, preset {nvenc_params['preset']} (10-bit)"
+                        f"🚀 H264 NVENC encoding: CQ {nvenc_params['cq']}, preset {nvenc_params['preset']} (phone compatible)"
                     )
                 else:
-                    click.echo("⚠️  HEVC NVENC not available, using software encoding")
+                    click.echo("⚠️  H264 NVENC not available, using software encoding")
             except Exception as e:
                 click.echo(f"⚠️  Hardware encoder check failed: {e}")
 
@@ -1710,6 +1710,151 @@ def gpu_test(ctx):
         click.echo(f"❌ Missing dependency: {e}")
     except Exception as e:
         click.echo(f"❌ GPU test failed: {e}")
+
+
+@cli.command()
+@click.argument("input_video", type=click.Path(exists=True))
+@click.option("--max-segments", "-n", default=5, help="Max segments to find")
+@click.option("--ultra-fast", is_flag=True, help="Use ultra-fast mode (8x downsampling)")
+@click.option("--debug", "-d", is_flag=True, help="Enable debug output to see detection details")
+@click.pass_context
+def fast_analyze(ctx, input_video, max_segments, ultra_fast, debug):
+    """🚀 Ultra-fast video analysis - optimized for speed testing."""
+
+    print("🚀 Ultra-Fast Video Analysis")
+    print("=" * 50)
+    print(f"📁 Input: {input_video}")
+    if ultra_fast:
+        print("⚡ Mode: Ultra-fast (8x downsampling)")
+    else:
+        print("⚡ Mode: Fast (4x downsampling)")
+    if debug:
+        print("🐛 Debug mode: Enabled")
+    print("=" * 50)
+
+    import time
+    start_time = time.time()
+
+    try:
+        # Enable debug logging if requested
+        if debug:
+            logging.getLogger().setLevel(logging.DEBUG)
+            # Enable scene detector logging specifically
+            logging.getLogger('src.core.scene_detector').setLevel(logging.DEBUG)
+            print("🐛 Debug logging enabled")
+
+        # Load config with speed optimizations
+        config = Config(ctx.obj["config_path"])
+
+        # Override settings for maximum speed if ultra-fast mode
+        if ultra_fast:
+            config._config['segmentation']['frame_sample_rate'] = 0.2  # Even faster
+            config._config['segmentation']['scene_threshold'] = 0.2   # Higher threshold
+            config._config['performance']['chunk_size'] = 3000       # Larger chunks
+
+        # Initialize processor
+        processor = VideoProcessor(config)
+
+        # Get video info quickly
+        cap = cv2.VideoCapture(input_video)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        duration = total_frames / fps
+        cap.release()
+
+        print(f"📊 Video: {duration:.1f}s, {fps:.1f}fps, {total_frames:,} frames")
+        if debug:
+            print(f"🐛 Config thresholds: scene={config.get('segmentation.scene_threshold')}, motion={config.get('segmentation.motion_threshold')}")
+            print(f"🐛 Sample rate: {config.get('segmentation.frame_sample_rate')} fps")
+        print("⏱️  Starting analysis...")
+
+        # Analyze with progress tracking
+        def progress_callback(current, total, message):
+            if debug or current % 50 == 0 or current == total:
+                percent = (current / total) * 100
+                bar_width = 30
+                filled = int(bar_width * percent / 100)
+                bar = "█" * filled + "░" * (bar_width - filled)
+                print(f"\r{bar} {percent:5.1f}% {message}", end="", flush=True)
+
+        scenes = processor.scene_detector.detect_scenes(
+            input_video, progress_callback=progress_callback
+        )
+
+        analysis_time = time.time() - start_time
+        print(f"\n✅ Analysis complete in {analysis_time:.1f}s")
+
+        if debug:
+            print(f"🐛 Raw scenes detected: {len(scenes)}")
+            for i, scene in enumerate(scenes[:3]):  # Show first 3 scenes
+                print(f"🐛 Scene {i+1}: {scene['start_time']:.1f}s-{scene['end_time']:.1f}s, score={scene.get('score', 0):.3f}")
+
+        # Filter and sort scenes
+        min_dur = config.get("segmentation.min_duration", 8)
+        max_dur = config.get("segmentation.max_duration", 25)
+        valid_scenes = [
+            scene for scene in scenes
+            if min_dur <= scene["duration"] <= max_dur
+        ]
+        valid_scenes.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        if debug:
+            print(f"🐛 Valid scenes (duration {min_dur}-{max_dur}s): {len(valid_scenes)}")
+
+        # Display results
+        print("\n📊 Results")
+        print("-" * 30)
+        print(f"Total scenes detected: {len(scenes)}")
+        print(f"Valid scenes ({min_dur}-{max_dur}s): {len(valid_scenes)}")
+        print(f"Analysis speed: {duration/analysis_time:.1f}x realtime")
+
+        if ultra_fast:
+            theoretical_speedup = 8 * 3  # 8x downsampling + 3x fewer frames
+            print(f"Speed improvement: ~{theoretical_speedup}x faster than original")
+
+        # Show top segments
+        if valid_scenes:
+            print(f"\n⭐ Top {min(max_segments, len(valid_scenes))} Segments")
+            print("-" * 50)
+
+            for i, scene in enumerate(valid_scenes[:max_segments], 1):
+                start = scene["start_time"]
+                end = scene["end_time"]
+                duration = scene["duration"]
+                score = scene["score"]
+
+                # Get metrics
+                metrics = scene.get("metrics", {})
+                motion = metrics.get("motion_magnitude", 0) * 100
+                visual = metrics.get("visual_interest", 0) * 100
+
+                print(f"{i}. {start:6.1f}s - {end:6.1f}s ({duration:4.1f}s)")
+                print(f"   Score: {score:.3f} | Motion: {motion:3.0f}% | Visual: {visual:3.0f}%")
+                print()
+
+        else:
+            print("⚠️  No valid segments found")
+            if debug:
+                print("🐛 Debug suggestions:")
+                print("   • Check that video has actual content/motion")
+                print("   • Try lowering scene_threshold in config.yaml")
+                print("   • Try increasing max_duration or decreasing min_duration")
+                print(f"   • Current settings: min={min_dur}s, max={max_dur}s")
+
+        # Performance tips
+        print("💡 Performance Tips:")
+        if analysis_time > duration / 2:
+            print("   • Use --ultra-fast for 8x speed improvement")
+            print("   • Check GPU acceleration: python src/cli.py gpu-test")
+        else:
+            print(f"   • Excellent speed! {duration/analysis_time:.1f}x realtime analysis")
+
+    except Exception as e:
+        print(f"\n❌ Analysis failed: {e}")
+        if ctx.obj["verbose"] or debug:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 def main():

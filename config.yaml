@@ -16,12 +16,12 @@ video:
 
 # Scene Detection and Segmentation
 segmentation:
-  # Scene detection thresholds (optimized for maximum scene detection)
-  scene_threshold: 0.05         # Very low for maximum scene detection
-  motion_threshold: 0.01        # Very low to catch all motion changes
+  # Scene detection thresholds (balanced for detection + speed)
+  scene_threshold: 0.08         # Lowered for better detection (was 0.15)
+  motion_threshold: 0.02        # Lowered to catch more motion (was 0.05)
 
-  # Frame sampling (frames per second to analyze) - higher for comprehensive detection
-  frame_sample_rate: 1.0        # Increased to 1 fps for comprehensive coverage
+  # Frame sampling (frames per second to analyze) - much higher for proper detection
+  frame_sample_rate: 2.0        # Dramatically increased - analyze 2 frames per second
 
   # Duration constraints (seconds) - optimized for 10-20 second segments
   min_duration: 8               # Minimum 8 seconds (was 3)
@@ -30,23 +30,23 @@ segmentation:
 
   # Dynamic duration settings - favor longer segments
   dynamic_duration: true        # Enable content-based duration
-  quality_extension_threshold: 0.4  # Lower threshold to extend more segments (was 0.6)
-  max_extension_duration: 15    # Allow up to 15 extra seconds (was 10)
+  quality_extension_threshold: 0.5  # More selective extension
+  max_extension_duration: 10    # Reduced for faster processing
 
   # Overlap handling
-  overlap_threshold: 0.2        # Lower overlap for more distinct segments
+  overlap_threshold: 0.25       # Slightly higher for better separation
 
-  # Content filtering (less strict to catch more good content)
+  # Content filtering (more permissive to catch good content)
   content_filtering:
     avoid_low_motion: true      # Skip segments with very low motion (landings)
-    min_motion_threshold: 0.02  # Lower threshold to catch more content
+    min_motion_threshold: 0.015  # Much lower for better detection (was 0.03)
     avoid_static_scenes: true   # Skip static/boring scenes
-    min_visual_interest: 0.15   # Lower threshold for more segments
+    min_visual_interest: 0.12   # Much lower for better detection (was 0.2)
 
   # Scoring weights for segment selection (optimized for FPV footage)
   scoring:
-    visual_interest: 0.5        # Balanced weight for visual content
-    motion_activity: 0.5        # Equal weight for motion/action
+    visual_interest: 0.6        # Higher weight for visual content
+    motion_activity: 0.4        # Motion weight for action
 
 # Color Grading and LUT Processing
 color_grading:
@@ -150,25 +150,31 @@ performance:
   # Processing
   use_gpu: true
   gpu_device: 0
-  num_threads: 8
-  chunk_size: 1000  # frames per chunk
+  num_threads: 12              # Increased for faster processing
+  chunk_size: 2000             # Doubled for better efficiency
 
-  # Hardware Encoding (NVENC/CUDA)
+  # Hardware Encoding (NVENC/CUDA) - H264 for phone compatibility
   force_hardware_encoding: true    # Force hardware encoding, fail if not available
   hardware_decoder: true           # Use hardware decoder (CUDA) for input
-  nvenc_preset: "p5"              # NVENC preset: p1 (fastest) to p7 (slowest)
-  nvenc_tuning: "hq"              # NVENC tuning: hq (high quality), ll (low latency)
-  nvenc_multipass: "qres"         # NVENC multipass: disabled, qres, fullres
+  nvenc_preset: "p3"              # Fast preset (was p1) - balanced speed/quality
+  nvenc_tuning: "ll"              # Low latency for speed (was hq)
+  nvenc_multipass: "disabled"     # Disabled for speed (was qres)
+  encoder_preference: "h264_nvenc" # Prefer H264 for phone compatibility
 
   # Memory management
-  streaming_mode: false
-  max_memory_usage: "8GB"
-  temp_dir: "/tmp/shorts_creator"
+  streaming_mode: true             # Enable streaming for faster processing
+  max_memory_usage: "12GB"        # Increased memory allocation
+  temp_dir: "/tmp/shorts_creator"  # Temporary processing directory
 
   # Caching
-  enable_cache: true
-  cache_dir: ".cache"
-  cache_duration: 7  # days
+  enable_cache: true              # Enable frame caching for repeated processing
+  cache_dir: ".cache"             # Cache directory
+  cache_max_size: "5GB"           # Maximum cache size
+
+  # Video processing optimizations - less aggressive downsampling
+  downsampling_factor: 6          # Reduced from 8x to 4x for better quality
+  max_frames_per_analysis: 2000   # Increased from 500 for better coverage
+  parallel_processing: true      # Enable parallel frame processing
 
 # Output Settings
 output:
