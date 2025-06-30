@@ -98,8 +98,8 @@ def cli(ctx, config: Optional[str], verbose: bool):
 @click.option(
     "--max-segments",
     "-n",
-    default=8,
-    help="Maximum number of segments to create per video",
+    default=0,
+    help="Maximum number of segments to create per video (0 = no limit)",
 )
 @click.option(
     "--use-default-lut",
@@ -189,7 +189,7 @@ def process(
         print("=" * 50)
         print(f"📂 Output: {output_dir}")
         print(f"🎨 LUT: {lut_to_use or 'None'}")
-        print(f"🔢 Max segments per video: {max_segments}")
+        print(f"🔢 Max segments per video: {'Unlimited' if max_segments == 0 else max_segments}")
         print(f"🎥 Videos to process: {len(input_files)}")
         print("=" * 50)
 
@@ -1368,9 +1368,17 @@ def _apply_lut_single_video(input_video, output_video, lut_path, quality, config
                         "-preset",
                         nvenc_params["preset"],
                         "-profile:v",
-                        "high",  # Use high profile for H264 compatibility
+                        "main",  # Use main profile for better phone compatibility
                         "-level:v",
-                        "4.1",  # Good level for most devices
+                        "4.0",  # Lower level for broader device support
+                        "-pix_fmt",
+                        "yuv420p",  # Force standard color format for phones
+                        "-colorspace",
+                        "bt709",  # Standard color space
+                        "-color_primaries",
+                        "bt709",  # Standard primaries
+                        "-color_trc",
+                        "bt709",  # Standard transfer characteristics
                         "-spatial_aq",
                         "1",
                         "-temporal_aq",
@@ -1483,7 +1491,7 @@ def _apply_lut_single_video(input_video, output_video, lut_path, quality, config
                     click.echo(f"\n⚠️  Hardware encoding failed: {stderr}")
                     click.echo("🔄 Retrying with software encoding...")
 
-                    # Rebuild command with software encoding
+                    # Rebuild command with software encoding - phone compatible
                     cmd_software = [
                         "ffmpeg",
                         "-i",
@@ -1496,6 +1504,18 @@ def _apply_lut_single_video(input_video, output_video, lut_path, quality, config
                         str(quality_params.get("crf", 23)),
                         "-preset",
                         quality_params.get("preset", "medium"),
+                        "-profile:v",
+                        "main",  # Phone-compatible profile
+                        "-level:v",
+                        "4.0",   # Broad device support
+                        "-pix_fmt",
+                        "yuv420p",  # Standard color format
+                        "-colorspace",
+                        "bt709",    # Standard color space
+                        "-color_primaries",
+                        "bt709",    # Standard primaries
+                        "-color_trc",
+                        "bt709",    # Standard transfer
                         "-c:a",
                         "copy",
                         "-movflags",
@@ -1714,48 +1734,33 @@ def gpu_test(ctx):
 
 @cli.command()
 @click.argument("input_video", type=click.Path(exists=True))
-@click.option("--max-segments", "-n", default=5, help="Max segments to find")
-@click.option("--ultra-fast", is_flag=True, help="Use ultra-fast mode (8x downsampling)")
-@click.option("--debug", "-d", is_flag=True, help="Enable debug output to see detection details")
+@click.option("--algorithm", "-a", type=click.Choice(['optical_flow', 'legacy']), default='optical_flow', help="Scene detection algorithm to use")
+@click.option("--max-segments", "-n", default=8, help="Max segments to find")
+@click.option("--threshold", "-t", type=float, help="Scene detection threshold (overrides config)")
 @click.pass_context
-def fast_analyze(ctx, input_video, max_segments, ultra_fast, debug):
-    """🚀 Ultra-fast video analysis - optimized for speed testing."""
+def test_algorithms(ctx, input_video, algorithm, max_segments, threshold):
+    """🔬 Test different scene detection algorithms and compare results."""
 
-    print("🚀 Ultra-Fast Video Analysis")
-    print("=" * 50)
+    print("🔬 Scene Detection Algorithm Comparison")
+    print("=" * 60)
     print(f"📁 Input: {input_video}")
-    if ultra_fast:
-        print("⚡ Mode: Ultra-fast (8x downsampling)")
-    else:
-        print("⚡ Mode: Fast (4x downsampling)")
-    if debug:
-        print("🐛 Debug mode: Enabled")
-    print("=" * 50)
+    print(f"🧮 Algorithm: {algorithm.upper()}")
+    if threshold:
+        print(f"🎯 Threshold: {threshold}")
+    print("=" * 60)
 
     import time
     start_time = time.time()
 
     try:
-        # Enable debug logging if requested
-        if debug:
-            logging.getLogger().setLevel(logging.DEBUG)
-            # Enable scene detector logging specifically
-            logging.getLogger('src.core.scene_detector').setLevel(logging.DEBUG)
-            print("🐛 Debug logging enabled")
-
-        # Load config with speed optimizations
+        # Load config and override algorithm
         config = Config(ctx.obj["config_path"])
+        config._config['segmentation']['algorithm'] = algorithm
 
-        # Override settings for maximum speed if ultra-fast mode
-        if ultra_fast:
-            config._config['segmentation']['frame_sample_rate'] = 0.2  # Even faster
-            config._config['segmentation']['scene_threshold'] = 0.2   # Higher threshold
-            config._config['performance']['chunk_size'] = 3000       # Larger chunks
+        if threshold:
+            config._config['segmentation']['scene_threshold'] = threshold
 
-        # Initialize processor
-        processor = VideoProcessor(config)
-
-        # Get video info quickly
+        # Get video info
         cap = cv2.VideoCapture(input_video)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -1763,33 +1768,33 @@ def fast_analyze(ctx, input_video, max_segments, ultra_fast, debug):
         cap.release()
 
         print(f"📊 Video: {duration:.1f}s, {fps:.1f}fps, {total_frames:,} frames")
-        if debug:
-            print(f"🐛 Config thresholds: scene={config.get('segmentation.scene_threshold')}, motion={config.get('segmentation.motion_threshold')}")
-            print(f"🐛 Sample rate: {config.get('segmentation.frame_sample_rate')} fps")
-        print("⏱️  Starting analysis...")
+        print(f"⏱️  Testing {algorithm.upper()} algorithm...")
 
-        # Analyze with progress tracking
+        # Initialize the specific detector
+        if algorithm == 'optical_flow':
+            from src.core.scene_detector import OpticalFlowFPVDetector
+            detector = OpticalFlowFPVDetector(config)
+            print("🎯 Using Optical Flow FPV detection (motion compensation)")
+        else:
+            from src.core.scene_detector import UltraFastFPVSceneDetector
+            detector = UltraFastFPVSceneDetector(config)
+            print("🔧 Using legacy frame-by-frame analysis")
+
+        # Progress tracking
         def progress_callback(current, total, message):
-            if debug or current % 50 == 0 or current == total:
-                percent = (current / total) * 100
-                bar_width = 30
-                filled = int(bar_width * percent / 100)
-                bar = "█" * filled + "░" * (bar_width - filled)
-                print(f"\r{bar} {percent:5.1f}% {message}", end="", flush=True)
+            percent = (current / total) * 100
+            bar_width = 40
+            filled = int(bar_width * percent / 100)
+            bar = "█" * filled + "░" * (bar_width - filled)
+            print(f"\r{bar} {percent:5.1f}% {message}", end="", flush=True)
 
-        scenes = processor.scene_detector.detect_scenes(
-            input_video, progress_callback=progress_callback
-        )
+        # Run detection
+        scenes = detector.detect_scenes(input_video, progress_callback=progress_callback)
 
         analysis_time = time.time() - start_time
-        print(f"\n✅ Analysis complete in {analysis_time:.1f}s")
+        print(f"\n\n✅ Analysis complete in {analysis_time:.1f}s")
 
-        if debug:
-            print(f"🐛 Raw scenes detected: {len(scenes)}")
-            for i, scene in enumerate(scenes[:3]):  # Show first 3 scenes
-                print(f"🐛 Scene {i+1}: {scene['start_time']:.1f}s-{scene['end_time']:.1f}s, score={scene.get('score', 0):.3f}")
-
-        # Filter and sort scenes
+        # Filter by duration
         min_dur = config.get("segmentation.min_duration", 8)
         max_dur = config.get("segmentation.max_duration", 25)
         valid_scenes = [
@@ -1798,63 +1803,66 @@ def fast_analyze(ctx, input_video, max_segments, ultra_fast, debug):
         ]
         valid_scenes.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-        if debug:
-            print(f"🐛 Valid scenes (duration {min_dur}-{max_dur}s): {len(valid_scenes)}")
-
-        # Display results
-        print("\n📊 Results")
-        print("-" * 30)
+        # Results summary
+        print(f"\n📊 Algorithm: {algorithm.upper()}")
+        print("-" * 40)
         print(f"Total scenes detected: {len(scenes)}")
         print(f"Valid scenes ({min_dur}-{max_dur}s): {len(valid_scenes)}")
-        print(f"Analysis speed: {duration/analysis_time:.1f}x realtime")
+        print(f"Processing speed: {duration/analysis_time:.1f}x realtime")
 
-        if ultra_fast:
-            theoretical_speedup = 8 * 3  # 8x downsampling + 3x fewer frames
-            print(f"Speed improvement: ~{theoretical_speedup}x faster than original")
+        if algorithm == 'ffmpeg':
+            print(f"Efficiency: ~{20:.0f}x faster than custom analysis")
 
         # Show top segments
         if valid_scenes:
-            print(f"\n⭐ Top {min(max_segments, len(valid_scenes))} Segments")
+            display_count = len(valid_scenes) if max_segments == 0 else min(max_segments, len(valid_scenes))
+            print(f"\n⭐ Top {display_count} Segments")
             print("-" * 50)
 
-            for i, scene in enumerate(valid_scenes[:max_segments], 1):
+            scenes_to_show = valid_scenes if max_segments == 0 else valid_scenes[:max_segments]
+            for i, scene in enumerate(scenes_to_show, 1):
                 start = scene["start_time"]
                 end = scene["end_time"]
                 duration = scene["duration"]
-                score = scene["score"]
+                score = scene.get("score", 0)
 
-                # Get metrics
+                print(f"{i:2d}. {start:6.1f}s - {end:6.1f}s ({duration:4.1f}s) Score: {score:.3f}")
+
+                # Show metrics if available
                 metrics = scene.get("metrics", {})
-                motion = metrics.get("motion_magnitude", 0) * 100
-                visual = metrics.get("visual_interest", 0) * 100
-
-                print(f"{i}. {start:6.1f}s - {end:6.1f}s ({duration:4.1f}s)")
-                print(f"   Score: {score:.3f} | Motion: {motion:3.0f}% | Visual: {visual:3.0f}%")
-                print()
+                if metrics.get("motion_magnitude") is not None:
+                    motion = metrics.get("motion_magnitude", 0) * 100
+                    visual = metrics.get("visual_interest", 0) * 100
+                    print(f"     Motion: {motion:3.0f}% | Visual: {visual:3.0f}%")
 
         else:
             print("⚠️  No valid segments found")
-            if debug:
-                print("🐛 Debug suggestions:")
-                print("   • Check that video has actual content/motion")
-                print("   • Try lowering scene_threshold in config.yaml")
-                print("   • Try increasing max_duration or decreasing min_duration")
-                print(f"   • Current settings: min={min_dur}s, max={max_dur}s")
+            print("\n💡 Try:")
+            print(f"   • Lower threshold: --threshold {config.get('segmentation.scene_threshold', 0.08) * 0.5:.3f}")
+            if algorithm == 'optical_flow':
+                print("   • Try legacy: --algorithm legacy")
+            else:
+                print("   • Try optical flow: --algorithm optical_flow")
 
-        # Performance tips
-        print("💡 Performance Tips:")
-        if analysis_time > duration / 2:
-            print("   • Use --ultra-fast for 8x speed improvement")
-            print("   • Check GPU acceleration: python src/cli.py gpu-test")
+        # Performance comparison
+        print("\n⚡ Performance Comparison:")
+        if algorithm == 'optical_flow':
+            print("   🎯 Optical Flow FPV Algorithm (Default):")
+            print("     • Speed: Optimized for FPV motion")
+            print("     • Accuracy: Motion compensation for extreme movement")
+            print("     • Memory: Moderate usage")
+            print("     • Best for: FPV drone footage, high-motion content")
         else:
-            print(f"   • Excellent speed! {duration/analysis_time:.1f}x realtime analysis")
+            print("   🔧 Legacy Algorithm (Backup):")
+            print("     • Speed: More thorough but slower")
+            print("     • Accuracy: Basic frame analysis")
+            print("     • Memory: Higher usage")
+            print("     • Best for: Fallback option, simple content")
 
     except Exception as e:
-        print(f"\n❌ Analysis failed: {e}")
-        if ctx.obj["verbose"] or debug:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
+        print(f"\n❌ Algorithm test failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def main():

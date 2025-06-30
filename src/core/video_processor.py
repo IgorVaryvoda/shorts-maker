@@ -29,7 +29,7 @@ except ImportError:
     sys.path.append(str(Path(__file__).parent.parent))
     from core.color_grader import ColorGrader
     from core.music_manager import MusicManager
-    from core.scene_detector import FPVSceneDetector, SceneSegment
+    from core.scene_detector import SceneSegment
     from utils.config import Config
     from utils.stabilizer import VideoStabilizer
 
@@ -46,7 +46,15 @@ class VideoProcessor:
         else:
             self.config = config_path_or_config
 
-        self.scene_detector = FPVSceneDetector(self.config)
+                        # Initialize scene detector based on config
+        algorithm = self.config.get('segmentation.algorithm', 'optical_flow').lower()
+        if algorithm == 'optical_flow':
+            from .scene_detector import OpticalFlowFPVDetector
+            self.scene_detector = OpticalFlowFPVDetector(self.config)
+        else:
+            # Legacy algorithm as backup
+            from .scene_detector import UltraFastFPVSceneDetector
+            self.scene_detector = UltraFastFPVSceneDetector(self.config)
         self.color_grader = ColorGrader(self.config)
         self.music_manager = MusicManager(self.config)
         self.stabilizer = VideoStabilizer(self.config.data)
@@ -140,7 +148,7 @@ class VideoProcessor:
             f"📊 Video Info: {width}x{height}, {duration:.1f}s, {fps:.1f}fps, {total_frames:,} frames"
         )
         print(
-            f"🎯 Target: {max_segments} shorts, LUT: {os.path.basename(lut_path) if lut_path else 'None'}"
+            f"🎯 Target: {'Unlimited' if max_segments == 0 else max_segments} shorts, LUT: {os.path.basename(lut_path) if lut_path else 'None'}"
         )
         if stabilize:
             print("🔧 Stabilization: Enabled")
@@ -306,7 +314,8 @@ class VideoProcessor:
         # Select top segments, ensuring variety
         selected = []
         for scene in valid_scenes:
-            if len(selected) >= max_segments:
+            # Check limit only if max_segments > 0 (0 means unlimited)
+            if max_segments > 0 and len(selected) >= max_segments:
                 break
 
             # Check for overlap with already selected scenes
@@ -319,8 +328,8 @@ class VideoProcessor:
             if not overlap:
                 selected.append(scene)
 
-        # If we don't have enough segments, relax the criteria
-        if len(selected) < max_segments and len(valid_scenes) > len(selected):
+        # If we don't have enough segments and there's a limit, relax the criteria
+        if max_segments > 0 and len(selected) < max_segments and len(valid_scenes) > len(selected):
             self.logger.warning(
                 f"Only found {len(selected)} high-quality segments, adding more with relaxed criteria"
             )
@@ -446,22 +455,22 @@ class VideoProcessor:
 
             if self.use_gpu:
                 try:
-                    # Check if NVENC is available
+                    # Check if NVENC is available - USE H264 for phone compatibility
                     result = subprocess.run(
                         ["ffmpeg", "-encoders"],
                         capture_output=True,
                         text=True,
                         timeout=5,
                     )
-                    if "hevc_nvenc" in result.stdout:
+                    if "h264_nvenc" in result.stdout:
                         use_hardware = True
-                        encoder = "hevc_nvenc"
+                        encoder = "h264_nvenc"
 
                         # Use config-based NVENC parameters
                         quality_map = {
-                            "low": {"cq": 35},  # Fastest
-                            "medium": {"cq": 28},  # Fast
-                            "high": {"cq": 23},  # Balanced
+                            "low": {"cq": 32},  # Fastest
+                            "medium": {"cq": 26},  # Fast
+                            "high": {"cq": 21},  # Balanced
                             "ultra": {"cq": 18},  # High quality
                         }
 
@@ -476,22 +485,26 @@ class VideoProcessor:
                             str(nvenc_params["cq"]),
                             "-preset",
                             self.nvenc_preset,
-                            "-tune",
-                            self.nvenc_tuning,
-                            "-multipass",
-                            self.nvenc_multipass,
                             "-profile:v",
-                            "main10",  # Use main10 profile for 10-bit
+                            "main",  # Use main profile for phone compatibility
                             "-level:v",
-                            "5.1",  # Higher level for 4K
+                            "4.0",  # Lower level for broader device support
+                            "-pix_fmt",
+                            "yuv420p",  # Force standard color format for phones
+                            "-colorspace",
+                            "bt709",  # Standard color space
+                            "-color_primaries",
+                            "bt709",  # Standard primaries
+                            "-color_trc",
+                            "bt709",  # Standard transfer characteristics
                             "-b:v",
                             quality_params.get(
-                                "b:v", "25M"
-                            ),  # Higher bitrate for 4K HEVC
+                                "b:v", "20M"
+                            ),  # Good bitrate for H264
                             "-maxrate",
-                            quality_params.get("b:v", "25M"),
+                            quality_params.get("b:v", "20M"),
                             "-bufsize",
-                            "50M",
+                            "40M",
                             "-spatial_aq",
                             "1",
                             "-temporal_aq",
@@ -500,14 +513,14 @@ class VideoProcessor:
                             "20",
                         ]
                         print(
-                            f"   🚀 HEVC NVENC: CQ {nvenc_params['cq']}, preset {self.nvenc_preset} (10-bit)"
+                            f"   🚀 H264 NVENC: CQ {nvenc_params['cq']}, preset {self.nvenc_preset} (phone compatible)"
                         )
                     else:
                         if self.force_hardware_encoding:
                             raise Exception(
-                                "HEVC NVENC not available but hardware encoding is forced"
+                                "H264 NVENC not available but hardware encoding is forced"
                             )
-                        print("   ⚠️  HEVC NVENC not available, using software encoding")
+                        print("   ⚠️  H264 NVENC not available, using software encoding")
                 except Exception as e:
                     if self.force_hardware_encoding:
                         raise Exception(f"Hardware encoding forced but failed: {e}")
@@ -524,10 +537,22 @@ class VideoProcessor:
                     str(quality_params.get("crf", 23)),
                     "-preset",
                     quality_params.get("preset", "medium"),
+                    "-profile:v",
+                    "main",  # Phone-compatible profile
+                    "-level:v",
+                    "4.0",   # Broad device support
+                    "-pix_fmt",
+                    "yuv420p",  # Standard color format
+                    "-colorspace",
+                    "bt709",    # Standard color space
+                    "-color_primaries",
+                    "bt709",    # Standard primaries
+                    "-color_trc",
+                    "bt709",    # Standard transfer
                 ]
                 if quality_params.get("b:v"):
                     encoder_params.extend(["-b:v", quality_params["b:v"]])
-                print("   🖥️  Using software encoding (x264)")
+                print("   🖥️  Using software encoding (x264) - phone compatible")
 
             # Build complete FFmpeg command
             cmd = [
@@ -878,14 +903,18 @@ class VideoProcessor:
                 output_file,
                 vcodec="libx264",
                 acodec="aac",
-                **self._get_ffmpeg_quality_params(),
+                **{"profile:v": "main", "level:v": "4.0", "pix_fmt": "yuv420p",
+                   "colorspace": "bt709", "color_primaries": "bt709", "color_trc": "bt709",
+                   **self._get_ffmpeg_quality_params()},
             )
         else:
             output_stream = ffmpeg.output(
                 output_stream,
                 output_file,
                 vcodec="libx264",
-                **self._get_ffmpeg_quality_params(),
+                **{"profile:v": "main", "level:v": "4.0", "pix_fmt": "yuv420p",
+                   "colorspace": "bt709", "color_primaries": "bt709", "color_trc": "bt709",
+                   **self._get_ffmpeg_quality_params()},
             )
 
         ffmpeg.run(output_stream, overwrite_output=True, quiet=True)

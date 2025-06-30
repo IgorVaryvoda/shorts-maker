@@ -16,6 +16,9 @@ video:
 
 # Scene Detection and Segmentation
 segmentation:
+  # Algorithm selection - choose which detection method to use
+  algorithm: "optical_flow"    # "optical_flow" (FPV optimized, default) or "legacy" (old frame analysis)
+
   # Scene detection thresholds (balanced for detection + speed)
   scene_threshold: 0.08         # Lowered for better detection (was 0.15)
   motion_threshold: 0.02        # Lowered to catch more motion (was 0.05)
