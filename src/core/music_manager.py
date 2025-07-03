@@ -4,17 +4,16 @@ Music Manager for FPV Shorts Creator
 Handles background music selection, audio processing, and integration.
 """
 
+import hashlib
+import json
+import logging
 import os
 import random
-import logging
-from pathlib import Path
-from typing import List, Optional, Dict, Any
 import subprocess
 import tempfile
-import json
-import hashlib
-from collections import defaultdict
 import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 try:
     import librosa
@@ -26,8 +25,10 @@ except ImportError:
 
 try:
     from ..utils.config import Config
+    from ..utils.database import MusicDatabase
 except ImportError:
     from utils.config import Config
+    from utils.database import MusicDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,9 @@ class MusicManager:
         # Create music directory if it doesn't exist
         os.makedirs(self.music_directory, exist_ok=True)
 
+        # Initialize database
+        self.db = MusicDatabase()
+
         # Cache for music files
         self._music_cache = None
 
@@ -70,31 +74,65 @@ class MusicManager:
         os.makedirs('.cache', exist_ok=True)
         self._analysis_cache = {}
         self._library_analysis_cache = {}
-        self._usage_stats = defaultdict(int)
-        self._recent_selections = []
 
-        # Cache files
+        # Cache files (for migration only)
         self._cache_file = os.path.join('.cache', 'music_analysis.json')
-        self._library_cache_file = os.path.join('.cache', 'music_library_analysis.json')
-        self._usage_stats_file = os.path.join('.cache', 'music_usage_stats.json')
+        self._library_cache_file = os.path.join(
+            '.cache', 'music_library_analysis.json'
+        )
+        # Migrate existing JSON caches into database
+        self.db.migrate_json_to_table(self._cache_file, 'analysis_cache')
+        self.db.migrate_json_to_table(self._library_cache_file, 'library_analysis')
 
+        self._migrate_usage_stats()
+        # Load caches from database
         self._load_all_caches()
 
         logger.info(f"Initialized Enhanced Music Manager - Music: {self.enable_music}")
+
+    def _migrate_usage_stats(self):
+        """Migrate old JSON-based usage stats to the database."""
+        old_usage_stats_file = os.path.join('.cache', 'music_usage_stats.json')
+        if not os.path.exists(old_usage_stats_file):
+            return
+
+        self.logger.info("Migrating old usage stats to database...")
+        try:
+            with open(old_usage_stats_file) as f:
+                data = json.load(f)
+
+            usage_stats = data.get('usage_stats', {})
+            # This doesn't have timestamps, so we can't migrate recent selections perfectly.
+            # We can, however, migrate usage counts.
+
+            music_files = self.get_music_files()
+            file_map = {os.path.basename(f): f for f in music_files}
+
+            for filename, count in usage_stats.items():
+                filepath = file_map.get(filename)
+                if filepath:
+                    # We don't have a real timestamp, so we'll just set it to now
+                    # and ensure the count is migrated.
+                    for _ in range(count):
+                        self.db.track_music_usage(filepath)
+
+            # Once migrated, remove the old file to prevent re-migration
+            os.remove(old_usage_stats_file)
+            self.logger.info("Successfully migrated usage stats.")
+
+        except Exception as e:
+            self.logger.error(f"Failed to migrate usage stats: {e}")
 
     def _load_all_caches(self):
         """Load all cached data."""
         self._load_analysis_cache()
         self._load_library_analysis()
-        self._load_usage_stats()
 
     def _load_analysis_cache(self):
         """Load cached music analysis results."""
         try:
-            if os.path.exists(self._cache_file):
-                with open(self._cache_file, 'r') as f:
-                    self._analysis_cache = json.load(f)
-                self.logger.debug(f"Loaded {len(self._analysis_cache)} cached music analyses")
+            self._analysis_cache = self.db.get_analysis_cache()
+            self.logger.debug(f"Loaded {len(self._analysis_cache)} cached music analyses")
         except Exception as e:
             self.logger.warning(f"Could not load music analysis cache: {e}")
             self._analysis_cache = {}
@@ -102,59 +140,33 @@ class MusicManager:
     def _load_library_analysis(self):
         """Load cached library analysis results."""
         try:
-            if os.path.exists(self._library_cache_file):
-                with open(self._library_cache_file, 'r') as f:
-                    self._library_analysis_cache = json.load(f)
-                self.logger.debug(f"Loaded library analysis for {len(self._library_analysis_cache)} tracks")
+            self._library_analysis_cache = self.db.get_library_analysis()
+            self.logger.debug(
+                f"Loaded library analysis for {len(self._library_analysis_cache)} tracks"
+            )
         except Exception as e:
             self.logger.warning(f"Could not load library analysis cache: {e}")
             self._library_analysis_cache = {}
 
-    def _load_usage_stats(self):
-        """Load music usage statistics."""
-        try:
-            if os.path.exists(self._usage_stats_file):
-                with open(self._usage_stats_file, 'r') as f:
-                    data = json.load(f)
-                    self._usage_stats = defaultdict(int, data.get('usage_stats', {}))
-                    self._recent_selections = data.get('recent_selections', [])
-                self.logger.debug(f"Loaded usage stats for {len(self._usage_stats)} tracks")
-        except Exception as e:
-            self.logger.warning(f"Could not load usage stats: {e}")
-            self._usage_stats = defaultdict(int)
-            self._recent_selections = []
-
     def _save_analysis_cache(self):
         """Save music analysis results to cache."""
         try:
-            with open(self._cache_file, 'w') as f:
-                json.dump(self._analysis_cache, f, indent=2)
-            self.logger.debug(f"Saved {len(self._analysis_cache)} music analyses to cache")
+            self.db.set_analysis_cache(self._analysis_cache)
+            self.logger.debug(
+                f"Saved {len(self._analysis_cache)} music analyses to DB"
+            )
         except Exception as e:
-            self.logger.warning(f"Could not save music analysis cache: {e}")
+            self.logger.warning(f"Could not save music analysis cache to DB: {e}")
 
     def _save_library_analysis(self):
         """Save library analysis results to cache."""
         try:
-            with open(self._library_cache_file, 'w') as f:
-                json.dump(self._library_analysis_cache, f, indent=2)
-            self.logger.debug(f"Saved library analysis for {len(self._library_analysis_cache)} tracks")
+            self.db.set_library_analysis(self._library_analysis_cache)
+            self.logger.debug(
+                f"Saved library analysis for {len(self._library_analysis_cache)} tracks to DB"
+            )
         except Exception as e:
-            self.logger.warning(f"Could not save library analysis cache: {e}")
-
-    def _save_usage_stats(self):
-        """Save music usage statistics."""
-        try:
-            data = {
-                'usage_stats': dict(self._usage_stats),
-                'recent_selections': self._recent_selections,
-                'last_updated': time.time()
-            }
-            with open(self._usage_stats_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            self.logger.debug(f"Saved usage stats for {len(self._usage_stats)} tracks")
-        except Exception as e:
-            self.logger.warning(f"Could not save usage stats: {e}")
+            self.logger.warning(f"Could not save library analysis cache to DB: {e}")
 
     def analyze_entire_library(self, force_reanalyze: bool = False) -> Dict[str, Any]:
         """Analyze the entire music library and cache results."""
@@ -388,7 +400,7 @@ class MusicManager:
         for genre in genres:
             genre_counts[genre] = genre_counts.get(genre, 0) + 1
 
-        print(f"\n🎵 Library Statistics:")
+        print("\n🎵 Library Statistics:")
         print(f"   • Average energy: {avg_energy:.3f}")
         print(f"   • High energy tracks: {high_energy_count}/{len(analyses)} ({high_energy_count/len(analyses)*100:.1f}%)")
         print(f"   • Average tempo: {avg_tempo:.1f} BPM")
@@ -454,11 +466,25 @@ class MusicManager:
         top_count = max(1, len(candidates) // 5)
         top_candidates = candidates[:top_count]
 
-        # Use weighted random selection from top candidates
-        weights = [c[1] for c in top_candidates]
-        selected_idx = self._weighted_random_choice(weights)
+        # Filter out recently used tracks from top candidates
+        avoid_recent_limit = self.config.get("audio.avoid_recent_limit", 10)
+        recently_used = set(self.db.get_recently_used(avoid_recent_limit))
+        final_candidates = [
+            c for c in top_candidates
+            if os.path.basename(c[0]) not in recently_used
+        ]
+        # Only allow cycling back once all candidates have been used
+        if not final_candidates:
+            candidate_names = {os.path.basename(c[0]) for c in top_candidates}
+            if recently_used >= candidate_names:
+                final_candidates = top_candidates
+            else:
+                return None
 
-        return top_candidates[selected_idx][0]
+        # Use weighted random selection from top candidates
+        weights = [c[1] for c in final_candidates]
+        selected_idx = self._weighted_random_choice(weights)
+        return final_candidates[selected_idx][0]
 
     def _calculate_selection_score(self, music_file: str, analysis: Dict[str, Any],
                                  segment_duration: float) -> float:
@@ -494,14 +520,23 @@ class MusicManager:
             score += 5
 
         # Usage frequency penalty (avoid overused tracks)
-        usage_count = self._usage_stats.get(os.path.basename(music_file), 0)
+        usage_count = self.db.get_usage_count(music_file)
         usage_penalty = min(15, usage_count * 3)  # Up to 15 point penalty
         score -= usage_penalty
 
         # Recent usage penalty (strong penalty for recently used)
-        if os.path.basename(music_file) in self._recent_selections[-10:]:  # Last 10 selections
-            recent_penalty = 20 - (self._recent_selections[::-1].index(os.path.basename(music_file)) * 2)
-            score -= max(10, recent_penalty)
+        avoid_recent_limit = self.config.get("audio.avoid_recent_limit", 10)
+        recently_used = self.db.get_recently_used(avoid_recent_limit)
+
+        if os.path.basename(music_file) in recently_used:
+            # More penalty if it was used more recently
+            try:
+                # The list is ordered by most recent first
+                recent_index = recently_used.index(os.path.basename(music_file))
+                recent_penalty = 20 - (recent_index * 2)
+                score -= max(10, recent_penalty)
+            except ValueError:
+                pass # Should not happen
 
         return max(0, score)  # Ensure non-negative score
 
@@ -530,35 +565,27 @@ class MusicManager:
             return None
 
         # Filter out recently used tracks
-        available = []
-        for music_file in music_files:
-            filename = os.path.basename(music_file)
-            if filename not in self._recent_selections[-5:]:  # Avoid last 5 selections
-                available.append(music_file)
-
-        # If all tracks were recently used, use all tracks
+        avoid_recent_limit = self.config.get("audio.avoid_recent_limit", 10)
+        recently_used = set(self.db.get_recently_used(avoid_recent_limit))
+        available = [
+            f for f in music_files
+            if os.path.basename(f) not in recently_used
+        ]
+        # Only cycle back if we've used every track at least once
         if not available:
-            available = music_files
-
+            all_names = {os.path.basename(f) for f in music_files}
+            if recently_used >= all_names:
+                available = music_files
+            else:
+                return None
         return random.choice(available)
 
     def _track_music_usage(self, music_file: str):
         """Track music usage for intelligent selection."""
-        filename = os.path.basename(music_file)
-
-        # Update usage count
-        self._usage_stats[filename] += 1
-
-        # Update recent selections (keep last 20)
-        self._recent_selections.append(filename)
-        if len(self._recent_selections) > 20:
-            self._recent_selections = self._recent_selections[-20:]
-
-        # Save updated stats
-        self._save_usage_stats()
+        self.db.track_music_usage(music_file)
 
     def _get_file_cache_key(self, music_path: str) -> str:
-        """Generate cache key for a music file."""
+        """Generate a consistent cache key for a music file."""
         try:
             # Use file path and modification time for cache key
             mtime = os.path.getmtime(music_path)
@@ -787,7 +814,7 @@ class MusicManager:
         cmd = [
             'ffmpeg',
             '-f', 'lavfi',
-            '-i', f'anullsrc=channel_layout=stereo:sample_rate=44100',
+            '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
             '-t', str(duration),
             '-y',
             output_path

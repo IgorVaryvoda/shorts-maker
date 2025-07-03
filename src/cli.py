@@ -20,11 +20,9 @@ import cv2
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 try:
-    from src.core.color_grader import ColorGrader
-    from src.core.scene_detector import FPVSceneDetector
     from src.core.video_processor import VideoProcessor
     from src.utils.config import Config
-    from src.utils.lut_loader import LUT3D, LUTLoader, create_sample_lut
+    from src.utils.lut_loader import LUTLoader, create_sample_lut
     from src.utils.progress import ProgressBar
 except ImportError:
     # Fallback for development
@@ -952,11 +950,8 @@ def music_check():
 
 @cli.command()
 @click.option("--force", "-f", is_flag=True, help="Force re-analysis of all tracks")
-@click.option(
-    "--show-stats", "-s", is_flag=True, help="Show detailed library statistics"
-)
-def music_library_analyze(force, show_stats):
-    """Analyze the entire music library with AI for intelligent selection."""
+def music_library_analyze(force):
+    """Analyze the entire music library and cache results."""
     try:
         from src.core.music_manager import MusicManager
         from src.utils.config import Config
@@ -971,40 +966,10 @@ def music_library_analyze(force, show_stats):
         click.echo("❌ Music is disabled in config")
         return
 
-    music_files = music_manager.get_music_files()
-    if not music_files:
-        click.echo("❌ No music files found in music/ directory")
-        return
+    # This will now automatically show stats after analysis
+    music_manager.analyze_entire_library(force_reanalyze=force)
 
-    click.echo("🎵 Starting comprehensive music library analysis...")
-    click.echo(f"📁 Found {len(music_files)} tracks to analyze")
-
-    if force:
-        click.echo("🔄 Force mode: Re-analyzing all tracks")
-
-    # Run the analysis
-    summary = music_manager.analyze_entire_library(force_reanalyze=force)
-
-    if show_stats and summary.get("analyzed", 0) + summary.get("cached", 0) > 0:
-        click.echo("\n📊 Detailed Statistics:")
-        click.echo(
-            f"   • Processing time: {time.time() - summary['analysis_timestamp']:.1f}s"
-        )
-        click.echo(
-            f"   • Cache efficiency: {summary['cached']}/{summary['total_tracks']} ({summary['cached'] / summary['total_tracks'] * 100:.1f}%)"
-        )
-
-        # Show some sample intelligent selections
-        click.echo("\n🎯 Testing Intelligent Selection:")
-        for duration in [10, 15, 20]:
-            selected = music_manager.select_music_for_video("test.mp4", duration)
-            if selected:
-                click.echo(f"   • {duration}s segment: {os.path.basename(selected)}")
-
-    click.echo("\n💡 Tips:")
-    click.echo("   • Analysis results are cached for fast future processing")
-    click.echo("   • Use this command after adding new music files")
-    click.echo("   • The system now uses AI to avoid repetitive music selection")
+    click.echo("\n💡 To see selection logic, run: python src/cli.py music-test-selection")
 
 
 @cli.command()
@@ -1028,21 +993,22 @@ def music_test_selection(test_duration, num_tests):
         click.echo("❌ Music is disabled in config")
         return
 
-    music_files = music_manager.get_music_files()
-    if not music_files:
-        click.echo("❌ No music files found")
+    if not music_manager.get_music_files():
+        click.echo("❌ No music files found in music/ directory")
         return
 
-    click.echo("🎵 Testing Intelligent Music Selection")
-    click.echo(f"🎯 Duration: {test_duration}s, Tests: {num_tests}")
-    click.echo("=" * 60)
-
-    # Ensure library is analyzed
+    # Analyze library if not already done
     if not music_manager._library_analysis_cache:
-        click.echo("🔍 Library not analyzed yet, running analysis...")
+        click.echo("🎵 Library not analyzed, running analysis first...")
         music_manager.analyze_entire_library()
 
+    click.echo("=" * 60)
+    click.echo(f"🧪 Running {num_tests} Music Selection Tests")
+    click.echo(f"🎯 Target Duration: {test_duration}s")
+    click.echo("=" * 60)
+
     selections = []
+
     for i in range(num_tests):
         selected = music_manager.select_music_for_video(
             f"test_video_{i}.mp4", test_duration
@@ -1060,7 +1026,8 @@ def music_test_selection(test_duration, num_tests):
             tempo = analysis.get("tempo", 0)
 
             click.echo(
-                f"  {i + 1:2d}. {filename[:45]:<45} | {energy:.3f} energy | {genre:<10} | {tempo:3.0f} BPM"
+                f"  {i + 1:2d}. {filename[:45]:<45} | "
+                f"{energy:.3f} energy | {genre:<10} | {tempo:3.0f} BPM"
             )
         else:
             click.echo(f"  {i + 1:2d}. ❌ No music selected")
@@ -1074,20 +1041,29 @@ def music_test_selection(test_duration, num_tests):
     click.echo("\n" + "=" * 60)
     click.echo("📊 Selection Analysis:")
     click.echo(
-        f"   • Unique tracks: {unique_selections}/{len(selections)} ({variety_percentage:.1f}% variety)"
+        f"   • Unique tracks: {unique_selections}/{len(selections)} "
+        f"({variety_percentage:.1f}% variety)"
     )
     click.echo(
-        f"   • Repetition: {'✅ Good variety' if variety_percentage > 80 else '⚠️ Some repetition' if variety_percentage > 50 else '❌ High repetition'}"
+        f"   • Repetition: "
+        f"{'✅ Good variety' if variety_percentage > 80 else '⚠️ Some repetition' if variety_percentage > 50 else '❌ High repetition'}"
     )
 
     if selections:
-        # Show usage stats
-        usage_stats = music_manager._usage_stats
-        avg_usage = sum(usage_stats.get(s, 0) for s in selections) / len(selections)
-        click.echo(f"   • Average usage count: {avg_usage:.1f}")
-        click.echo(f"   • Recent selections: {len(music_manager._recent_selections)}")
+        # Show usage stats from the database
+        usage_stats = music_manager.db.get_all_usage_stats()
+        if usage_stats:
+            total_plays = sum(row['usage_count'] for row in usage_stats)
+            avg_usage = total_plays / len(usage_stats)
+            most_used = usage_stats[0]
 
-    click.echo("\n💡 To reset usage stats: rm .cache/music_usage_stats.json")
+            click.echo(f"   • Average usage count: {avg_usage:.1f}")
+            click.echo(
+                f"   • Most used track: {most_used['filename']} "
+                f"({most_used['usage_count']} plays)"
+            )
+
+    click.echo("\n💡 To reset usage stats: rm .cache/music_library.db")
 
 
 @cli.command()
@@ -1749,7 +1725,6 @@ def test_algorithms(ctx, input_video, algorithm, max_segments, threshold):
         print(f"🎯 Threshold: {threshold}")
     print("=" * 60)
 
-    import time
     start_time = time.time()
 
     try:
@@ -1863,6 +1838,34 @@ def test_algorithms(ctx, input_video, algorithm, max_segments, threshold):
         print(f"\n❌ Algorithm test failed: {e}")
         import traceback
         traceback.print_exc()
+
+
+@cli.command()
+@click.pass_context
+def music_db_stats(ctx):
+    """Show current music usage statistics from the database."""
+    try:
+        from src.core.music_manager import MusicManager
+        from src.utils.config import Config
+    except ImportError:
+        from core.music_manager import MusicManager
+        from utils.config import Config
+    from datetime import datetime
+
+    config = Config(ctx.obj["config_path"])
+    manager = MusicManager(config)
+    stats = manager.db.get_all_usage_stats()
+    if not stats:
+        click.echo("No usage stats found in database.")
+        return
+
+    click.echo("🎵 Music Usage Statistics:")
+    for row in stats:
+        last_used = datetime.fromtimestamp(row["last_used"])
+        click.echo(
+            f"  {row['filename']}: {row['usage_count']} plays; "
+            f"last used {last_used}"
+        )
 
 
 def main():

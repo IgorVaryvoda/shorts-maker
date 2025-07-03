@@ -7,7 +7,7 @@ video:
   fps: 30
   quality: "ultra"  # low, medium, high, ultra
   codec: "h264"
-  bitrate: "10M"  # Video bitrate
+  bitrate: "20M"  # Video bitrate
   audio_bitrate: "128k"
 
   # Input handling
@@ -89,10 +89,10 @@ audio:
 
   # Intelligent Selection Settings
   intelligent_selection: true   # Enable AI-powered music selection
-  variety_factor: 0.8          # 0.0-1.0, higher = more variety, lower = more consistent
+  variety_factor: 0.9          # 0.0-1.0, higher = more variety, lower = more consistent
   energy_preference: 0.7       # 0.0-1.0, preference for high-energy tracks
   tempo_preference: "upbeat"   # "slow", "medium", "upbeat", "fast"
-  avoid_recent_limit: 10       # Avoid tracks used in last N videos
+  avoid_recent_limit: 20       # Avoid tracks used in last N videos
 
   # Library Analysis
   auto_analyze_library: true   # Automatically analyze new music files
